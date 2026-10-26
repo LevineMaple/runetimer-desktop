@@ -1,0 +1,65 @@
+Source for RuneTimer v1.1.3-pc1, modified 2026-09-27.
+Booster extension, 2026-10-24:
+  pc_booster.py provides a monotonic 100-second clock with alerts at 97 seconds.
+  Automatic sessions start one second after the detected rune disappears: the first cue
+  plays once, subsequent cues play three times with 0.5-second gaps between utterances.
+  All cues use the user-supplied assets/sounds/tts_booster.mp3 and counter alert volume.
+  Mode is persisted, while running state resets on launch. OFF cancels sound.
+  Main dock and OBS widget share a sky-blue elongated octagon toggle.
+  Widget order: rune, booster countdown, COUNT.
+  pc_halfhour.py and pc_halfhour_ui.py add a fixed second 30-minute card.
+  Its alert plays three times at 1790 seconds; each cycle ends at 1800.
+  Add via the white plus above the main card; both counters stay stopped
+  on app launch. Test with test_halfhour.py and test_halfhour_ui.py.
+  Tests: python -m unittest test_booster; python test_booster_ui.py
+  Set BOOSTER_TEST_PROFILE=low for the low-resolution real Tk test.
+  Build: python -m PyInstaller --noconfirm --distpath ../../outputs/RuneTimer-OBS-Booster-20261024 --workpath build-booster-20261024 pc.spec
+Temporary map-specific rune audio patch, 2026-10-13:
+  pc_map_audio.py matches both visible title rows for
+  "도원경 / 사계가 머무는 누각" using assets/map_audio/four_seasons.json.
+  This supports the current native 1x game text rendering and translations.
+  Obscured/missing/differently scaled titles are NOT treated as a match.
+  pc_app.py reads the title and minimap from a single captured frame and
+  suppresses only automatic rune audio while the title matches. User sound
+  preferences, unrelated sounds and explicit sound tests remain unchanged.
+  Leaving the match resets detection; two fresh positives can sound again.
+  Manual/offline mode does not use map recognition. Already-playing audio may
+  finish; pending rune audio is cleared and rechecked before playback.
+  Tests: python test_map_audio.py; python test_map_audio_flow.py;
+         python test_obs_widget.py
+  Build: python -m PyInstaller --noconfirm --distpath ../../outputs/RuneTimer-OBS-MapMute-20261013 --workpath build-mapmute-20261013 pc.spec
+OBS widget compatibility patch, 2026-10-13:
+  pc_app.py gives the widget the stable title "RuneTimer OBS Widget".
+  pc_capture.py removes WS_EX_TOOLWINDOW from the native wrapper on every Map.
+  Borderless presentation, transparency, and topmost state are preserved.
+  Run python test_obs_widget.py on Windows to exercise actual Tk HWNDs through
+  three show/hide cycles against OBS enumeration conditions.
+  OBS's actual capture output still requires visual confirmation in OBS.
+  Patched build command (from this source folder):
+    python -m PyInstaller --noconfirm --distpath ../../outputs/RuneTimer-OBS-20261013 --workpath build-obs-20261013 pc.spec
+Copyright (C) 2026. GPL-3.0-or-later.
+
+Files: rune_base.py (application UI with isolated settings paths),
+pc_capture.py (DPI aware desktop capture and actual game window selection),
+pc_app.py (PC-specific subclass, selection UI, preview and diagnostics),
+test_pc.py (regression tests).
+
+Build on Windows x64 with Python 3.12:
+  python -m venv .venv
+  .venv\Scripts\python -m pip install -r requirements.txt
+  .venv\Scripts\python test_pc.py
+  .venv\Scripts\python -m PyInstaller --noconfirm pc.spec
+Output: dist\RuneTimer.exe
+Run source: .venv\Scripts\python pc_app.py
+
+The production build was made with Python 3.12.14, Pillow 12.3.0,
+PyInstaller 6.22.3 and pyinstaller-hooks-contrib 2026.7.
+The first run copies selected preferences from previously saved settings into a separate
+RuneTimerThisPC settings directory. For isolated testing set RUNE_TIMER_PC_DATA
+to a separate directory. --smoke-test exits after 14 seconds and writes a report.
+
+Window bug: the original _sync_rune_region_to_maplestory_window chose the first
+matching process ID from EnumWindows; Maple exposed an off-screen same-PID
+auxiliary window. Rank visible client area, then follow client-relative pixel
+coordinates instead. Do not scale coordinates using that unrelated window.
+Rune shape/color thresholds are unchanged.

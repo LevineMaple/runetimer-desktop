@@ -1415,6 +1415,7 @@ class MapleTimerApp:
             gwl_style = -16
             ws_caption = 0x00C00000
             ws_thickframe = 0x00040000
+            ws_border = 0x00800000  # Stable border when inactive.
             ws_maximizebox = 0x00010000
             ws_sysmenu = 0x00080000
             ws_minimizebox = 0x00020000
@@ -1424,13 +1425,21 @@ class MapleTimerApp:
             swp_framechanged = 0x0020
             try:
                 style = user32.GetWindowLongPtrW(hwnd, gwl_style)
-                style = (style & ~(ws_caption | ws_thickframe | ws_maximizebox)) | ws_sysmenu | ws_minimizebox
+                style = (style & ~(ws_caption | ws_thickframe | ws_maximizebox)) | ws_border | ws_sysmenu | ws_minimizebox
                 user32.SetWindowLongPtrW(hwnd, gwl_style, style)
             except AttributeError:
                 style = user32.GetWindowLongW(hwnd, gwl_style)
-                style = (style & ~(ws_caption | ws_thickframe | ws_maximizebox)) | ws_sysmenu | ws_minimizebox
+                style = (style & ~(ws_caption | ws_thickframe | ws_maximizebox)) | ws_border | ws_sysmenu | ws_minimizebox
                 user32.SetWindowLongW(hwnd, gwl_style, style)
             user32.SetWindowPos(hwnd, 0, 0, 0, 0, 0, swp_nomove | swp_nosize | swp_nozorder | swp_framechanged)
+            # Keep the DWM frame identical in focused and unfocused states.
+            try:
+                border_color = ctypes.c_uint32(0x0031302B)  # COLORREF for #2b3031
+                ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                    hwnd, 34, ctypes.byref(border_color), ctypes.sizeof(border_color)
+                )  # DWMWA_BORDER_COLOR (Windows 11)
+            except (AttributeError, OSError):
+                pass
         except Exception:
             pass
         self._refresh_windows_taskbar_identity()

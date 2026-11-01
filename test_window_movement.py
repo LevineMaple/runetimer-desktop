@@ -8,6 +8,38 @@ from test_booster_ui import pc_app
 
 
 class WindowMovementTests(unittest.TestCase):
+    def test_settings_transition_preserves_actual_main_bounds(self):
+        with patch.object(pc_app.PcTimerApp, '_show_startup_splash'):
+            app = pc_app.PcTimerApp()
+        try:
+            app._show_main_window()
+            app.root.update()
+            app._reset_app_size()
+            app.root.update_idletasks()
+            bounds = (app.root.winfo_x(), app.root.winfo_y(),
+                      app.root.winfo_width(), app.root.winfo_height())
+            with patch.object(app, '_capture_restore_blur_image'), patch.object(app, '_show_restore_blur_overlay'):
+                for name in ('settings', 'monitor', 'settings'):
+                    app._switch_page_with_blur(name)
+                    settled = pc_app.tk.BooleanVar(app.root, False)
+                    app.root.after(300, lambda: settled.set(True))
+                    app.root.wait_variable(settled)
+                    self.assertEqual((app.root.winfo_x(), app.root.winfo_y(),
+                                      app.root.winfo_width(), app.root.winfo_height()), bounds)
+                    canvas = app.settings_backdrop if name == 'settings' else app.monitor_backdrop
+                    coords = canvas.coords(canvas.find_withtag('resize_grip')[0])
+                    sx = canvas.winfo_rootx() + int((coords[0] + coords[2]) / 2)
+                    sy = canvas.winfo_rooty() + int((coords[1] + coords[3]) / 2)
+                    image = pc_app.base.ImageGrab.grab(bbox=(sx-3, sy-3, sx+4, sy+4)).convert('RGB')
+                    self.assertTrue(any(65 <= min(rgb) <= max(rgb) <= 120 and max(rgb)-min(rgb) < 20
+                                        for rgb in [image.getpixel((x,y)) for x in range(7) for y in range(7)]))
+        finally:
+            app.shutting_down = True
+            app._booster_audio.stop()
+            for after_id in app.root.tk.call('after', 'info'):
+                app.root.after_cancel(after_id)
+            app.root.destroy()
+
     def test_settings_grip_matches_monitor_on_first_entry(self):
         with patch.object(pc_app.PcTimerApp, '_show_startup_splash'):
             app = pc_app.PcTimerApp()

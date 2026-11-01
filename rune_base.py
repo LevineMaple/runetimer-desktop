@@ -3439,10 +3439,8 @@ class MapleTimerApp:
             return
         should_blur = False
         position_before = self._current_raw_position()
-        size_before = nearest_app_size(
-            getattr(self, "app_size", DEFAULT_APP_SIZE)[0],
-            getattr(self, "app_size", DEFAULT_APP_SIZE)[1],
-        )
+        self.root.update_idletasks()
+        size_before = (self.root.winfo_width(), self.root.winfo_height())
         try:
             should_blur = self.root.state() == "normal" and bool(self.root.winfo_viewable())
         except tk.TclError:
@@ -3463,6 +3461,8 @@ class MapleTimerApp:
     def _restore_page_transition_position(self, position, size=None):
         if getattr(self, "widget_mode_active", False):
             return
+        if getattr(self, "resizing_main_window", False) or getattr(self, "dragging_main_window", False):
+            return
         if position is None:
             return
         try:
@@ -3470,10 +3470,11 @@ class MapleTimerApp:
             self.app_position = (x, y)
             if size:
                 width, height = int(size[0]), int(size[1])
-                self.root.geometry(f"{width}x{height}+{x}+{y}")
-            else:
-                self.root.geometry(f"+{x}+{y}")
+                if (self.root.winfo_width(), self.root.winfo_height()) != (width, height):
+                    self._resize_main_window_nomove(width, height)
+            self._move_main_window(x, y)
             self.root.update_idletasks()
+            self._refresh_resize_surface()
         except (tk.TclError, TypeError, ValueError):
             pass
 

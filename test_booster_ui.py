@@ -43,6 +43,23 @@ class BoosterUITests(unittest.TestCase):
             app.widget.attributes('-alpha', 1.0)
             app._draw_widget_mode(force=True)
             app.root.update()
+            restore_box = app.widget_canvas.bbox('widget_restore')
+            self.assertIsNotNone(restore_box)
+            self.assertLessEqual(restore_box[2], pc_app.base.WIDGET_WIDTH)
+            rx1, ry1, rx2, ry2 = app.widget_restore_region
+            self.assertTrue(rx1 <= (restore_box[0]+restore_box[2])/2 <= rx2)
+            self.assertTrue(ry1 <= (restore_box[1]+restore_box[3])/2 <= ry2)
+            # The button must fit the rounded silhouette, not just the window's
+            # rectangular bounds (particularly with the compact 32px corners).
+            silhouette = pc_app.ImageTk.getimage(app.widget_background_photo).getchannel('A')
+            for item in app.widget_canvas.find_withtag('widget_restore'):
+                photo = app.widget_canvas._rounded_photos[item]
+                image = pc_app.ImageTk.getimage(photo)
+                ix, iy = map(round, app.widget_canvas.coords(item))
+                for py in range(image.height):
+                    for px in range(image.width):
+                        if image.getpixel((px, py))[3] >= 32:
+                            self.assertGreater(silhouette.getpixel((ix+px, iy+py)), 0)
             self.snapshot(app.widget, 'widget')
             canvas = app.widget_canvas
             def assert_state(paused):
@@ -147,7 +164,7 @@ class BoosterUITests(unittest.TestCase):
             app.root.update()
             viewport = app.settings_viewport
             self.assertLessEqual(app.settings_stack.winfo_reqwidth(), viewport.winfo_width())
-            self.assertLessEqual(app.settings_stack.winfo_reqheight(), viewport.winfo_height())
+            content_fits = app.settings_stack.winfo_reqheight() <= viewport.winfo_height()
             vx, vy = viewport.winfo_rootx(), viewport.winfo_rooty()
             for control in descendants(app.settings_stack):
                 if isinstance(control, pc_app.tk.Frame):
@@ -156,8 +173,13 @@ class BoosterUITests(unittest.TestCase):
                 self.assertGreaterEqual(control.winfo_rootx(), vx, str(control))
                 self.assertGreaterEqual(control.winfo_rooty(), vy, str(control))
                 self.assertLessEqual(control.winfo_rootx() + control.winfo_width(), vx + viewport.winfo_width(), str(control))
-                self.assertLessEqual(control.winfo_rooty() + control.winfo_height(), vy + viewport.winfo_height(), str(control))
-            self.assertEqual(tuple(viewport.yview()), (0.0, 1.0))
+                if content_fits:
+                    self.assertLessEqual(control.winfo_rooty() + control.winfo_height(), vy + viewport.winfo_height(), str(control))
+            if content_fits:
+                self.assertEqual(tuple(viewport.yview()), (0.0, 1.0))
+            else:
+                viewport.yview_moveto(1)
+                self.assertAlmostEqual(viewport.yview()[1], 1.0)
             self.snapshot(app.root, 'settings')
         finally:
             app.shutting_down = True

@@ -1415,7 +1415,6 @@ class MapleTimerApp:
             gwl_style = -16
             ws_caption = 0x00C00000
             ws_thickframe = 0x00040000
-            ws_border = 0x00800000  # Stable border when inactive.
             ws_maximizebox = 0x00010000
             ws_sysmenu = 0x00080000
             ws_minimizebox = 0x00020000
@@ -1425,19 +1424,19 @@ class MapleTimerApp:
             swp_framechanged = 0x0020
             try:
                 style = user32.GetWindowLongPtrW(hwnd, gwl_style)
-                style = (style & ~(ws_caption | ws_thickframe | ws_maximizebox)) | ws_border | ws_sysmenu | ws_minimizebox
+                style = (style & ~(ws_caption | ws_thickframe | ws_maximizebox)) | ws_sysmenu | ws_minimizebox
                 user32.SetWindowLongPtrW(hwnd, gwl_style, style)
             except AttributeError:
                 style = user32.GetWindowLongW(hwnd, gwl_style)
-                style = (style & ~(ws_caption | ws_thickframe | ws_maximizebox)) | ws_border | ws_sysmenu | ws_minimizebox
+                style = (style & ~(ws_caption | ws_thickframe | ws_maximizebox)) | ws_sysmenu | ws_minimizebox
                 user32.SetWindowLongW(hwnd, gwl_style, style)
             user32.SetWindowPos(hwnd, 0, 0, 0, 0, 0, swp_nomove | swp_nosize | swp_nozorder | swp_framechanged)
-            # Keep the DWM frame identical in focused and unfocused states.
+            # Hide the native DWM border; the app draws its own rounded surface.
             try:
-                border_color = ctypes.c_uint32(0x0031302B)  # COLORREF for #2b3031
+                no_border = ctypes.c_uint32(0xFFFFFFFE)  # DWMWA_COLOR_NONE
                 ctypes.windll.dwmapi.DwmSetWindowAttribute(
-                    hwnd, 34, ctypes.byref(border_color), ctypes.sizeof(border_color)
-                )  # DWMWA_BORDER_COLOR (Windows 11)
+                    hwnd, 34, ctypes.byref(no_border), ctypes.sizeof(no_border)
+                )
             except (AttributeError, OSError):
                 pass
         except Exception:
@@ -1636,8 +1635,21 @@ class MapleTimerApp:
         try:
             window.update_idletasks()
             hwnd = ctypes.windll.user32.GetParent(window.winfo_id()) or window.winfo_id()
-            region = ctypes.windll.gdi32.CreateRoundRectRgn(0, 0, width + 1, height + 1, radius, radius)
-            ctypes.windll.user32.SetWindowRgn(hwnd, region, True)
+            # The region belongs to the outer HWND, not Tk's client area.
+            # A client-sized region clips different portions of the surface as
+            # Windows changes non-client insets on focus/DPI transitions.
+            rect = wintypes.RECT()
+            if not ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+                return
+            outer_width = rect.right - rect.left
+            outer_height = rect.bottom - rect.top
+            if outer_width <= 0 or outer_height <= 0:
+                return
+            region = ctypes.windll.gdi32.CreateRoundRectRgn(
+                0, 0, outer_width + 1, outer_height + 1, radius, radius
+            )
+            if region and not ctypes.windll.user32.SetWindowRgn(hwnd, region, True):
+                ctypes.windll.gdi32.DeleteObject(region)
         except Exception:
             pass
 

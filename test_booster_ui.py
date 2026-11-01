@@ -43,6 +43,23 @@ class BoosterUITests(unittest.TestCase):
             app.widget.attributes('-alpha', 1.0)
             app._draw_widget_mode(force=True)
             app.root.update()
+            restore_box = app.widget_canvas.bbox('widget_restore')
+            self.assertIsNotNone(restore_box)
+            self.assertLessEqual(restore_box[2], pc_app.base.WIDGET_WIDTH)
+            rx1, ry1, rx2, ry2 = app.widget_restore_region
+            self.assertTrue(rx1 <= (restore_box[0]+restore_box[2])/2 <= rx2)
+            self.assertTrue(ry1 <= (restore_box[1]+restore_box[3])/2 <= ry2)
+            # The button must fit the rounded silhouette, not just the window's
+            # rectangular bounds (particularly with the compact 32px corners).
+            silhouette = pc_app.ImageTk.getimage(app.widget_background_photo).getchannel('A')
+            for item in app.widget_canvas.find_withtag('widget_restore'):
+                photo = app.widget_canvas._rounded_photos[item]
+                image = pc_app.ImageTk.getimage(photo)
+                ix, iy = map(round, app.widget_canvas.coords(item))
+                for py in range(image.height):
+                    for px in range(image.width):
+                        if image.getpixel((px, py))[3] >= 32:
+                            self.assertGreater(silhouette.getpixel((ix+px, iy+py)), 0)
             self.snapshot(app.widget, 'widget')
             canvas = app.widget_canvas
             def assert_state(paused):

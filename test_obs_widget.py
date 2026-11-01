@@ -55,7 +55,7 @@ class ObsWidgetTests(unittest.TestCase):
                 self.assertGreater(rect.bottom, 0)
                 self.assertEqual(timer.widget.title(), 'RuneTimer OBS Widget')
                 self.assertTrue(timer.widget.overrideredirect())
-                self.assertEqual(timer.widget.wm_attributes('-transparentcolor'), app.base.TRANSPARENT)
+                self.assertEqual(str(timer.widget.wm_attributes('-transparentcolor')), app.base.TRANSPARENT)
                 timer.widget.withdraw()
                 root.update()
         finally:

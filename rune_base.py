@@ -4141,8 +4141,11 @@ class MapleTimerApp:
         return ImageTk.PhotoImage(image)
 
     def _draw_widget_restore_button(self, canvas):
-        x2 = 384 - 11
-        y1 = 11
+        # The compact widget keeps a 32px corner radius instead of scaling it.
+        # Its top-right transparent area is therefore larger proportionally.
+        # Include the antialias padding when moving the button inside the card.
+        x2 = 367 if LOW_RES else 384 - 11
+        y1 = 24 if LOW_RES else 11
         size = 27
         x1 = x2 - size
         y2 = y1 + size

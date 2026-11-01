@@ -2539,6 +2539,7 @@ class MapleTimerApp:
         self.bottom_dock = tk.Canvas(page, width=620, height=160, bg=c["surface"], highlightthickness=0, bd=0, cursor="hand2")
         self.bottom_dock.place(relx=0.5, y=720, anchor="n")
         self.bottom_dock.bind("<Button-1>", self._handle_bottom_dock_click)
+        self.bottom_dock.bind("<Configure>", lambda _event: self._draw_bottom_dock())
         self._draw_bottom_dock()
 
         return page
@@ -3153,6 +3154,14 @@ class MapleTimerApp:
         canvas.delete("all")
         width = max(1, int(canvas.winfo_width() or float(canvas.cget("width")) or 620))
         height = max(1, int(canvas.winfo_height() or float(canvas.cget("height")) or 160))
+        # Tk child canvases are opaque. Copy the glow underneath this canvas so
+        # the rectangular widget bounds do not cut a black hole around the dock.
+        if hasattr(self, "monitor_glow_pil"):
+            x, y = canvas.winfo_x(), canvas.winfo_y()
+            background = Image.new("RGBA", (width, height), c["surface"])
+            background.alpha_composite(self.monitor_glow_pil, (-x, -y))
+            self.bottom_dock_background_photo = ImageTk.PhotoImage(background)
+            canvas.create_image(0, 0, image=self.bottom_dock_background_photo, anchor="nw")
         scale = max(MIN_UI_SCALE, min(1.28, width / 620))
         dock_x1, dock_y1, dock_x2, dock_y2 = 0, 4, width, height - 4
         self._canvas_rounded_rect(canvas, dock_x1 + 2, dock_y1 + 2, dock_x2 - 2, dock_y2 - 2, max(14, int(48 * scale)), fill=(c["panel"]), outline=c["line"], width=2)
@@ -3302,6 +3311,7 @@ class MapleTimerApp:
         draw.ellipse((565, 30, 830, 280), fill=(19, 242, 174, 22))
         glow = glow.filter(ImageFilter.GaussianBlur(74))
         image.alpha_composite(glow)
+        self.monitor_glow_pil = image
         return ImageTk.PhotoImage(image)
 
     def _draw_rune_diamond(self, active=False):

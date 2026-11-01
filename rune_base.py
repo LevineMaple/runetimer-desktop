@@ -2549,6 +2549,9 @@ class MapleTimerApp:
 
         self.countdown_remaining = int(self.warning_loop_seconds)
         self.countdown_canvas = self.monitor_backdrop
+        # The page Configure event can precede its child canvas resize. Redraw
+        # once the canvas has its final width so the timer uses the new center.
+        self.countdown_canvas.bind("<Configure>", self._draw_countdown_display)
         self._draw_countdown_display()
 
         self.auto_detect_status_var = tk.StringVar(value="수동 지정 대기")
@@ -3622,11 +3625,13 @@ class MapleTimerApp:
         return "break"
 
     def _reset_app_size(self):
+        self._cancel_surface_refresh()
         self.app_size = DEFAULT_APP_SIZE
         self.app_position = self._current_safe_position()
-        self.root.geometry(f"{DEFAULT_APP_SIZE[0]}x{DEFAULT_APP_SIZE[1]}+{self.app_position[0]}+{self.app_position[1]}")
-        self.root.update_idletasks()
-        self._refresh_window_surface()
+        # Use the same native resize path as the grip. Reapplying window chrome
+        # after laying out the timer can change client dimensions a second time.
+        self._resize_main_window_nomove(*self.app_size)
+        self._refresh_resize_surface()
         self._save_settings()
 
     def _toggle_topmost(self):

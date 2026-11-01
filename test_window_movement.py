@@ -8,6 +8,37 @@ from test_booster_ui import pc_app
 
 
 class WindowMovementTests(unittest.TestCase):
+    def test_reset_size_centers_timer_on_first_click(self):
+        with patch.object(pc_app.PcTimerApp, '_show_startup_splash'):
+            app = pc_app.PcTimerApp()
+        try:
+            app._show_main_window(force_focus=True)
+            app.root.update()
+            default = pc_app.base.DEFAULT_APP_SIZE
+            for factor in (0.8, 1.15):
+                app.app_size = pc_app.base.nearest_app_size(
+                    int(default[0] * factor), int(default[1] * factor))
+                app._resize_main_window_nomove(*app.app_size)
+                app._refresh_resize_surface()
+                app.root.update_idletasks()
+                app._reset_app_size()
+                app.root.update_idletasks()
+                first = app.countdown_card_metrics
+                self.assertAlmostEqual(first[0] + first[2] / 2,
+                                       app.countdown_canvas.winfo_width() / 2, delta=1)
+                size = app.root.winfo_width(), app.root.winfo_height()
+                self.assertEqual(size, default)
+                app._reset_app_size()
+                app.root.update_idletasks()
+                self.assertEqual(app.countdown_card_metrics, first)
+                self.assertEqual((app.root.winfo_width(), app.root.winfo_height()), size)
+        finally:
+            app.shutting_down = True
+            app._booster_audio.stop()
+            for after_id in app.root.tk.call('after', 'info'):
+                app.root.after_cancel(after_id)
+            app.root.destroy()
+
     def test_drag_moves_live_window_without_capture_or_surface_swap(self):
         with patch.object(pc_app.PcTimerApp, '_show_startup_splash'):
             app = pc_app.PcTimerApp()
@@ -44,6 +75,8 @@ class WindowMovementTests(unittest.TestCase):
         finally:
             app.shutting_down = True
             app._booster_audio.stop()
+            for after_id in app.root.tk.call('after', 'info'):
+                app.root.after_cancel(after_id)
             app.root.destroy()
 
 

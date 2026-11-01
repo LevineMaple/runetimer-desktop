@@ -8,6 +8,38 @@ from test_booster_ui import pc_app
 
 
 class WindowMovementTests(unittest.TestCase):
+    def test_settings_remain_reachable_in_small_window(self):
+        with patch.object(pc_app.PcTimerApp, '_show_startup_splash'):
+            app = pc_app.PcTimerApp()
+        try:
+            app._show_main_window()
+            app.root.update()
+            app._show_page('settings')
+            app.root.update_idletasks()
+            app._resize_main_window_nomove(pc_app.base.APP_MIN_WIDTH, pc_app.base.APP_MIN_HEIGHT)
+            app._refresh_resize_surface()
+            app.root.update_idletasks()
+            viewport = app.settings_viewport
+            self.assertLessEqual(app.settings_stack.winfo_reqwidth(), viewport.winfo_width())
+            bbox = viewport.bbox(app.settings_stack_item)
+            self.assertGreaterEqual(bbox[0], 0)
+            self.assertLessEqual(bbox[2], viewport.winfo_width())
+            viewport.yview_moveto(0)
+            self.assertAlmostEqual(viewport.yview()[0], 0)
+            if app.settings_stack.winfo_reqheight() > viewport.winfo_height():
+                self.assertFalse(any(isinstance(child, pc_app.tk.Scrollbar)
+                                     for child in viewport.master.winfo_children()))
+                app._scroll_settings(SimpleNamespace(delta=-120, num=None))
+                self.assertGreater(viewport.yview()[0], 0)
+                viewport.yview_moveto(1)
+                self.assertAlmostEqual(viewport.yview()[1], 1)
+        finally:
+            app.shutting_down = True
+            app._booster_audio.stop()
+            for after_id in app.root.tk.call('after', 'info'):
+                app.root.after_cancel(after_id)
+            app.root.destroy()
+
     def test_reset_size_centers_timer_on_first_click(self):
         with patch.object(pc_app.PcTimerApp, '_show_startup_splash'):
             app = pc_app.PcTimerApp()

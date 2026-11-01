@@ -2568,7 +2568,7 @@ class MapleTimerApp:
         c = self.colors
         page = tk.Frame(self.page_shell, bg=c["surface"])
         viewport = tk.Canvas(page, bg=c["surface"], highlightthickness=0)
-        viewport.pack(fill="both", expand=True, padx=0, pady=(36 if LOW_RES else 64, 4))
+        viewport.pack(side="left", fill="both", expand=True, padx=0, pady=(36 if LOW_RES else 64, 4))
         viewport.configure(yscrollincrement=18)
         stack = tk.Frame(viewport, bg=c["surface"])
         stack_item = viewport.create_window(0, 0, anchor="n", window=stack)
@@ -2582,10 +2582,13 @@ class MapleTimerApp:
         columns = tk.Frame(panel, bg=c["panel"])
         columns.pack(fill="x")
         left = tk.Frame(columns, bg=c["panel"])
-        left.pack(side="left", anchor="n")
-        tk.Frame(columns, bg=c["line"], width=1).pack(side="left", fill="y", padx=5 if LOW_RES else 18)
+        left.grid(row=0, column=0, sticky="nw")
+        divider = tk.Frame(columns, bg=c["line"], width=1)
+        divider.grid(row=0, column=1, sticky="ns", padx=5 if LOW_RES else 18)
         right = tk.Frame(columns, bg=c["panel"])
-        right.pack(side="left", anchor="n")
+        right.grid(row=0, column=2, sticky="nw")
+        self.settings_columns = (panel, left, divider, right)
+        self.settings_single_column = False
         tk.Label(left, text="화면 크기", bg=c["panel"], fg=c["text"],
                  font=self._settings_font(9 if LOW_RES else 10, "bold")).pack(anchor="w")
         profile_row = tk.Frame(left, bg=c["panel"])
@@ -2655,6 +2658,22 @@ class MapleTimerApp:
         stack = self.settings_stack
         width = max(1, viewport.winfo_width())
         height = max(1, viewport.winfo_height())
+        panel, left, divider, right = self.settings_columns
+        two_column_width = (left.winfo_reqwidth() + right.winfo_reqwidth()
+                            + 1 + 2 * (5 if LOW_RES else 18)
+                            + 2 * (5 if LOW_RES else 15))
+        single_column = width < two_column_width
+        if single_column != self.settings_single_column:
+            self.settings_single_column = single_column
+            if single_column:
+                divider.grid_remove()
+                right.grid_configure(row=1, column=0, pady=(12, 0))
+            else:
+                divider.grid()
+                right.grid_configure(row=0, column=2, pady=0)
+            # Grid dimensions settle before recalculating centering and scrolling.
+            viewport.after_idle(self._center_settings_content)
+            return
         content_height = stack.winfo_reqheight()
         page = viewport.master
         # Center in the page when it fits; keep the first row reachable when tall.

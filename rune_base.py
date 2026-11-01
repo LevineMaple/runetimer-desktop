@@ -1522,6 +1522,23 @@ class MapleTimerApp:
     def _move_main_window(self, x, y):
         x, y = int(x), int(y)
         self.app_position = (x, y)
+        if sys.platform.startswith("win"):
+            try:
+                user32 = ctypes.WinDLL("user32", use_last_error=True)
+                user32.GetParent.argtypes = [wintypes.HWND]
+                user32.GetParent.restype = wintypes.HWND
+                user32.SetWindowPos.argtypes = [
+                    wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
+                    ctypes.c_int, ctypes.c_int, wintypes.UINT,
+                ]
+                user32.SetWindowPos.restype = wintypes.BOOL
+                hwnd = user32.GetParent(self.root.winfo_id()) or self.root.winfo_id()
+                # Preserve the native size and activation state while moving.
+                # Tk geometry can reuse stale caption insets after chrome changes.
+                if user32.SetWindowPos(hwnd, None, x, y, 0, 0, 0x0015):
+                    return  # SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE
+            except (AttributeError, OSError, tk.TclError):
+                pass
         try:
             self.root.geometry(f"+{x}+{y}")
         except tk.TclError:
@@ -3485,7 +3502,8 @@ class MapleTimerApp:
             self.drag_offset_y = int(event.y_root) - int(self.root.winfo_y())
         except tk.TclError:
             self.drag_offset_x, self.drag_offset_y = event.x, event.y
-        self.drag_using_proxy = self._begin_proxy_window_drag()
+        # Move the live window. Capturing the desktop and swapping in a second
+        # layered window stalls the first movement and flashes on release.
         return "break"
 
     def _begin_proxy_window_drag(self):
@@ -3528,42 +3546,28 @@ class MapleTimerApp:
             return False
 
     def _drag(self, event):
-        if getattr(self, "drag_blocked", False):
+        if getattr(self, "drag_blocked", False) or not getattr(self, "dragging_main_window", False):
             return "break"
         x = int(event.x_root) - int(getattr(self, "drag_offset_x", 0))
         y = int(event.y_root) - int(getattr(self, "drag_offset_y", 0))
-        self.app_position = (x, y)
-        if getattr(self, "drag_using_proxy", False) and getattr(self, "drag_proxy", None) is not None:
-            try:
-                self.drag_proxy.geometry(f"+{x}+{y}")
-            except tk.TclError:
-                self.drag_using_proxy = False
-                self._move_main_window(x, y)
-        else:
+        if (x, y) != self.app_position:
             self._move_main_window(x, y)
         return "break"
 
-    def _end_drag(self, _event):
+    def _end_drag(self, event):
         if getattr(self, "drag_blocked", False):
             self.drag_blocked = False
             self.dragging_main_window = False
             return "break"
         if not getattr(self, "dragging_main_window", False):
             return "break"
+        self._drag(event)
         self._finish_main_window_drag()
         return "break"
 
     def _finish_main_window_drag(self):
         x, y = self._safe_app_position(getattr(self, "app_position", None))
-        self.app_position = (x, y)
-        self._destroy_drag_proxy()
-        try:
-            self.root.attributes("-alpha", 1.0)
-            self.root.geometry(f"+{x}+{y}")
-            self.root.deiconify()
-            self.root.lift()
-        except tk.TclError:
-            pass
+        self._move_main_window(x, y)
         self.drag_using_proxy = False
         self.dragging_main_window = False
         try:
@@ -3571,7 +3575,6 @@ class MapleTimerApp:
         except tk.TclError:
             pass
         self.app_position = self._current_safe_position()
-        self._schedule_surface_refresh(80)
         self._save_settings()
 
     def _destroy_drag_proxy(self):

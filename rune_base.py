@@ -1431,6 +1431,14 @@ class MapleTimerApp:
                 style = (style & ~(ws_caption | ws_thickframe | ws_maximizebox)) | ws_sysmenu | ws_minimizebox
                 user32.SetWindowLongW(hwnd, gwl_style, style)
             user32.SetWindowPos(hwnd, 0, 0, 0, 0, 0, swp_nomove | swp_nosize | swp_nozorder | swp_framechanged)
+            # Hide the native DWM border; the app draws its own rounded surface.
+            try:
+                no_border = ctypes.c_uint32(0xFFFFFFFE)  # DWMWA_COLOR_NONE
+                ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                    hwnd, 34, ctypes.byref(no_border), ctypes.sizeof(no_border)
+                )
+            except (AttributeError, OSError):
+                pass
         except Exception:
             pass
         self._refresh_windows_taskbar_identity()
@@ -1514,6 +1522,23 @@ class MapleTimerApp:
     def _move_main_window(self, x, y):
         x, y = int(x), int(y)
         self.app_position = (x, y)
+        if sys.platform.startswith("win"):
+            try:
+                user32 = ctypes.WinDLL("user32", use_last_error=True)
+                user32.GetParent.argtypes = [wintypes.HWND]
+                user32.GetParent.restype = wintypes.HWND
+                user32.SetWindowPos.argtypes = [
+                    wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
+                    ctypes.c_int, ctypes.c_int, wintypes.UINT,
+                ]
+                user32.SetWindowPos.restype = wintypes.BOOL
+                hwnd = user32.GetParent(self.root.winfo_id()) or self.root.winfo_id()
+                # Preserve the native size and activation state while moving.
+                # Tk geometry can reuse stale caption insets after chrome changes.
+                if user32.SetWindowPos(hwnd, None, x, y, 0, 0, 0x0015):
+                    return  # SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE
+            except (AttributeError, OSError, tk.TclError):
+                pass
         try:
             self.root.geometry(f"+{x}+{y}")
         except tk.TclError:
@@ -1627,8 +1652,36 @@ class MapleTimerApp:
         try:
             window.update_idletasks()
             hwnd = ctypes.windll.user32.GetParent(window.winfo_id()) or window.winfo_id()
-            region = ctypes.windll.gdi32.CreateRoundRectRgn(0, 0, width + 1, height + 1, radius, radius)
-            ctypes.windll.user32.SetWindowRgn(hwnd, region, True)
+            # The region belongs to the outer HWND, not Tk's client area.
+            # A client-sized region clips different portions of the surface as
+            # Windows changes non-client insets on focus/DPI transitions.
+            rect = wintypes.RECT()
+            if not ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+                return
+            outer_width = rect.right - rect.left
+            outer_height = rect.bottom - rect.top
+            if outer_width <= 0 or outer_height <= 0:
+                return
+            if window is self.root:
+                # Match the client-area mask used by the drag snapshot and
+                # restore overlay. Otherwise pressing the window replaces it
+                # with an inset snapshot and makes the app appear to shrink.
+                origin = wintypes.POINT(0, 0)
+                if not ctypes.windll.user32.ClientToScreen(window.winfo_id(), ctypes.byref(origin)):
+                    return
+                left, top, right, bottom = self._main_surface_bounds(width, height)
+                offset_x = origin.x - rect.left
+                offset_y = origin.y - rect.top
+                region = ctypes.windll.gdi32.CreateRoundRectRgn(
+                    offset_x + left, offset_y + top,
+                    offset_x + right + 1, offset_y + bottom + 1, 56, 56
+                )
+            else:
+                region = ctypes.windll.gdi32.CreateRoundRectRgn(
+                    0, 0, outer_width + 1, outer_height + 1, radius, radius
+                )
+            if region and not ctypes.windll.user32.SetWindowRgn(hwnd, region, True):
+                ctypes.windll.gdi32.DeleteObject(region)
         except Exception:
             pass
 
@@ -2348,12 +2401,12 @@ class MapleTimerApp:
         self.card_window = self.backdrop.create_window(12, 12, anchor="nw", window=self.card)
         self.surface_widgets.append(self.card)
 
-        titlebar = tk.Frame(self.card, bg=c["surface_alt"], padx=ui_px(26), pady=0, height=ui_px(76))
+        titlebar = tk.Frame(self.card, bg=c["surface"], padx=ui_px(26), pady=0, height=ui_px(76))
         titlebar.pack(fill="x")
         titlebar.pack_propagate(False)
         self._bind_drag(titlebar)
         self.surface_widgets.append(titlebar)
-        dots = tk.Frame(titlebar, bg=c["surface_alt"])
+        dots = tk.Frame(titlebar, bg=c["surface"])
         dots.pack(side="left", pady=(ui_px(26),0), anchor="n")
         self._dot(dots, c["red"], self._quit_app).pack(side="left", padx=(0,ui_px(13)))
         self._dot(dots, c["yellow"], self._minimize).pack(side="left", padx=(0,ui_px(13)))
@@ -2372,6 +2425,8 @@ class MapleTimerApp:
         self.monitor_page = self.pages["monitor"]
         self._show_page("monitor")
         self.resize_grip = tk.Canvas(self.card, width=24, height=24, bg=c["surface"], highlightthickness=0, bd=0, cursor="size_nw_se")
+        for offset in (6, 12, 18):
+            self.resize_grip.create_line(offset, 21, 21, offset, fill=c["muted_2"], width=1)
         self.resize_grip.place(relx=1.0, rely=1.0, anchor="se", x=-10, y=-10)
         self.resize_grip.bind("<ButtonPress-1>", self._start_resize)
         self.resize_grip.bind("<B1-Motion>", self._resize)
@@ -2501,6 +2556,7 @@ class MapleTimerApp:
         self.bottom_dock = tk.Canvas(page, width=620, height=160, bg=c["surface"], highlightthickness=0, bd=0, cursor="hand2")
         self.bottom_dock.place(relx=0.5, y=720, anchor="n")
         self.bottom_dock.bind("<Button-1>", self._handle_bottom_dock_click)
+        self.bottom_dock.bind("<Configure>", lambda _event: self._draw_bottom_dock())
         self._draw_bottom_dock()
 
         return page
@@ -3115,6 +3171,14 @@ class MapleTimerApp:
         canvas.delete("all")
         width = max(1, int(canvas.winfo_width() or float(canvas.cget("width")) or 620))
         height = max(1, int(canvas.winfo_height() or float(canvas.cget("height")) or 160))
+        # Tk child canvases are opaque. Copy the glow underneath this canvas so
+        # the rectangular widget bounds do not cut a black hole around the dock.
+        if hasattr(self, "monitor_glow_pil"):
+            x, y = canvas.winfo_x(), canvas.winfo_y()
+            background = Image.new("RGBA", (width, height), c["surface"])
+            background.alpha_composite(self.monitor_glow_pil, (-x, -y))
+            self.bottom_dock_background_photo = ImageTk.PhotoImage(background)
+            canvas.create_image(0, 0, image=self.bottom_dock_background_photo, anchor="nw")
         scale = max(MIN_UI_SCALE, min(1.28, width / 620))
         dock_x1, dock_y1, dock_x2, dock_y2 = 0, 4, width, height - 4
         self._canvas_rounded_rect(canvas, dock_x1 + 2, dock_y1 + 2, dock_x2 - 2, dock_y2 - 2, max(14, int(48 * scale)), fill=(c["panel"]), outline=c["line"], width=2)
@@ -3264,6 +3328,7 @@ class MapleTimerApp:
         draw.ellipse((565, 30, 830, 280), fill=(19, 242, 174, 22))
         glow = glow.filter(ImageFilter.GaussianBlur(74))
         image.alpha_composite(glow)
+        self.monitor_glow_pil = image
         return ImageTk.PhotoImage(image)
 
     def _draw_rune_diamond(self, active=False):
@@ -3388,8 +3453,11 @@ class MapleTimerApp:
     def _draw_backdrop(self, _event=None):
         w, h = max(self.backdrop.winfo_width(),1), max(self.backdrop.winfo_height(),1)
         self.backdrop.delete("backdrop")
-        self._rounded_rect(14,18,w-10,h-8,30,fill=self.colors["shadow"],outline="",tag="backdrop")
-        self._rounded_rect(8,8,w-14,h-14,28,fill=self.colors["surface"],outline="#0f1212",tag="backdrop")
+        # Use the same pixel mask as the native window and drag snapshot.
+        # Independently smoothed polygons leave seams at the rounded edges.
+        surface = Image.new("RGBA", (w, h), self.colors["surface"])
+        self.backdrop_surface_photo = ImageTk.PhotoImage(self._clip_restore_blur_to_app_shape(surface))
+        self.backdrop.create_image(0, 0, image=self.backdrop_surface_photo, anchor="nw", tags="backdrop")
         self.backdrop.tag_lower("backdrop")
         self.backdrop.itemconfigure(self.card_window, width=max(w-26,1), height=max(h-24,1))
 
@@ -3434,14 +3502,15 @@ class MapleTimerApp:
             self.drag_offset_y = int(event.y_root) - int(self.root.winfo_y())
         except tk.TclError:
             self.drag_offset_x, self.drag_offset_y = event.x, event.y
-        self.drag_using_proxy = self._begin_proxy_window_drag()
+        # Move the live window. Capturing the desktop and swapping in a second
+        # layered window stalls the first movement and flashes on release.
         return "break"
 
     def _begin_proxy_window_drag(self):
         try:
             self.root.update_idletasks()
-            x = int(self.root.winfo_x())
-            y = int(self.root.winfo_y())
+            x = int(self.root.winfo_rootx())
+            y = int(self.root.winfo_rooty())
             width = max(1, int(self.root.winfo_width()))
             height = max(1, int(self.root.winfo_height()))
             image = ImageGrab.grab(bbox=(x, y, x + width, y + height)).convert("RGBA")
@@ -3477,42 +3546,28 @@ class MapleTimerApp:
             return False
 
     def _drag(self, event):
-        if getattr(self, "drag_blocked", False):
+        if getattr(self, "drag_blocked", False) or not getattr(self, "dragging_main_window", False):
             return "break"
         x = int(event.x_root) - int(getattr(self, "drag_offset_x", 0))
         y = int(event.y_root) - int(getattr(self, "drag_offset_y", 0))
-        self.app_position = (x, y)
-        if getattr(self, "drag_using_proxy", False) and getattr(self, "drag_proxy", None) is not None:
-            try:
-                self.drag_proxy.geometry(f"+{x}+{y}")
-            except tk.TclError:
-                self.drag_using_proxy = False
-                self._move_main_window(x, y)
-        else:
+        if (x, y) != self.app_position:
             self._move_main_window(x, y)
         return "break"
 
-    def _end_drag(self, _event):
+    def _end_drag(self, event):
         if getattr(self, "drag_blocked", False):
             self.drag_blocked = False
             self.dragging_main_window = False
             return "break"
         if not getattr(self, "dragging_main_window", False):
             return "break"
+        self._drag(event)
         self._finish_main_window_drag()
         return "break"
 
     def _finish_main_window_drag(self):
         x, y = self._safe_app_position(getattr(self, "app_position", None))
-        self.app_position = (x, y)
-        self._destroy_drag_proxy()
-        try:
-            self.root.attributes("-alpha", 1.0)
-            self.root.geometry(f"+{x}+{y}")
-            self.root.deiconify()
-            self.root.lift()
-        except tk.TclError:
-            pass
+        self._move_main_window(x, y)
         self.drag_using_proxy = False
         self.dragging_main_window = False
         try:
@@ -3520,7 +3575,6 @@ class MapleTimerApp:
         except tk.TclError:
             pass
         self.app_position = self._current_safe_position()
-        self._schedule_surface_refresh(80)
         self._save_settings()
 
     def _destroy_drag_proxy(self):
@@ -4258,13 +4312,17 @@ class MapleTimerApp:
         except Exception:
             self.restore_blur_pil = self._make_restore_blur_fallback()
 
+    @staticmethod
+    def _main_surface_bounds(width, height):
+        return (8, 8, width - 14, height - 14)
+
     def _clip_restore_blur_to_app_shape(self, image):
         width, height = image.size
         scale = 4
         mask = Image.new("L", (width * scale, height * scale), 0)
         mask_draw = ImageDraw.Draw(mask)
         mask_draw.rounded_rectangle(
-            (8 * scale, 8 * scale, (width - 14) * scale, (height - 14) * scale),
+            tuple(value * scale for value in self._main_surface_bounds(width, height)),
             radius=28 * scale,
             fill=255,
         )

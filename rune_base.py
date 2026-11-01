@@ -2384,12 +2384,12 @@ class MapleTimerApp:
         self.card_window = self.backdrop.create_window(12, 12, anchor="nw", window=self.card)
         self.surface_widgets.append(self.card)
 
-        titlebar = tk.Frame(self.card, bg=c["surface_alt"], padx=ui_px(26), pady=0, height=ui_px(76))
+        titlebar = tk.Frame(self.card, bg=c["surface"], padx=ui_px(26), pady=0, height=ui_px(76))
         titlebar.pack(fill="x")
         titlebar.pack_propagate(False)
         self._bind_drag(titlebar)
         self.surface_widgets.append(titlebar)
-        dots = tk.Frame(titlebar, bg=c["surface_alt"])
+        dots = tk.Frame(titlebar, bg=c["surface"])
         dots.pack(side="left", pady=(ui_px(26),0), anchor="n")
         self._dot(dots, c["red"], self._quit_app).pack(side="left", padx=(0,ui_px(13)))
         self._dot(dots, c["yellow"], self._minimize).pack(side="left", padx=(0,ui_px(13)))
@@ -2408,6 +2408,8 @@ class MapleTimerApp:
         self.monitor_page = self.pages["monitor"]
         self._show_page("monitor")
         self.resize_grip = tk.Canvas(self.card, width=24, height=24, bg=c["surface"], highlightthickness=0, bd=0, cursor="size_nw_se")
+        for offset in (6, 12, 18):
+            self.resize_grip.create_line(offset, 21, 21, offset, fill=c["muted_2"], width=1)
         self.resize_grip.place(relx=1.0, rely=1.0, anchor="se", x=-10, y=-10)
         self.resize_grip.bind("<ButtonPress-1>", self._start_resize)
         self.resize_grip.bind("<B1-Motion>", self._resize)
@@ -3424,8 +3426,11 @@ class MapleTimerApp:
     def _draw_backdrop(self, _event=None):
         w, h = max(self.backdrop.winfo_width(),1), max(self.backdrop.winfo_height(),1)
         self.backdrop.delete("backdrop")
-        self._rounded_rect(14,18,w-10,h-8,30,fill=self.colors["shadow"],outline="",tag="backdrop")
-        self._rounded_rect(8,8,w-14,h-14,28,fill=self.colors["surface"],outline="#0f1212",tag="backdrop")
+        # Use the same pixel mask as the native window and drag snapshot.
+        # Independently smoothed polygons leave seams at the rounded edges.
+        surface = Image.new("RGBA", (w, h), self.colors["surface"])
+        self.backdrop_surface_photo = ImageTk.PhotoImage(self._clip_restore_blur_to_app_shape(surface))
+        self.backdrop.create_image(0, 0, image=self.backdrop_surface_photo, anchor="nw", tags="backdrop")
         self.backdrop.tag_lower("backdrop")
         self.backdrop.itemconfigure(self.card_window, width=max(w-26,1), height=max(h-24,1))
 

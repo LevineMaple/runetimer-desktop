@@ -1645,9 +1645,24 @@ class MapleTimerApp:
             outer_height = rect.bottom - rect.top
             if outer_width <= 0 or outer_height <= 0:
                 return
-            region = ctypes.windll.gdi32.CreateRoundRectRgn(
-                0, 0, outer_width + 1, outer_height + 1, radius, radius
-            )
+            if window is self.root:
+                # Match the client-area mask used by the drag snapshot and
+                # restore overlay. Otherwise pressing the window replaces it
+                # with an inset snapshot and makes the app appear to shrink.
+                origin = wintypes.POINT(0, 0)
+                if not ctypes.windll.user32.ClientToScreen(window.winfo_id(), ctypes.byref(origin)):
+                    return
+                left, top, right, bottom = self._main_surface_bounds(width, height)
+                offset_x = origin.x - rect.left
+                offset_y = origin.y - rect.top
+                region = ctypes.windll.gdi32.CreateRoundRectRgn(
+                    offset_x + left, offset_y + top,
+                    offset_x + right + 1, offset_y + bottom + 1, 56, 56
+                )
+            else:
+                region = ctypes.windll.gdi32.CreateRoundRectRgn(
+                    0, 0, outer_width + 1, outer_height + 1, radius, radius
+                )
             if region and not ctypes.windll.user32.SetWindowRgn(hwnd, region, True):
                 ctypes.windll.gdi32.DeleteObject(region)
         except Exception:
@@ -3461,8 +3476,8 @@ class MapleTimerApp:
     def _begin_proxy_window_drag(self):
         try:
             self.root.update_idletasks()
-            x = int(self.root.winfo_x())
-            y = int(self.root.winfo_y())
+            x = int(self.root.winfo_rootx())
+            y = int(self.root.winfo_rooty())
             width = max(1, int(self.root.winfo_width()))
             height = max(1, int(self.root.winfo_height()))
             image = ImageGrab.grab(bbox=(x, y, x + width, y + height)).convert("RGBA")
@@ -4279,13 +4294,17 @@ class MapleTimerApp:
         except Exception:
             self.restore_blur_pil = self._make_restore_blur_fallback()
 
+    @staticmethod
+    def _main_surface_bounds(width, height):
+        return (8, 8, width - 14, height - 14)
+
     def _clip_restore_blur_to_app_shape(self, image):
         width, height = image.size
         scale = 4
         mask = Image.new("L", (width * scale, height * scale), 0)
         mask_draw = ImageDraw.Draw(mask)
         mask_draw.rounded_rectangle(
-            (8 * scale, 8 * scale, (width - 14) * scale, (height - 14) * scale),
+            tuple(value * scale for value in self._main_surface_bounds(width, height)),
             radius=28 * scale,
             fill=255,
         )

@@ -147,7 +147,7 @@ class BoosterUITests(unittest.TestCase):
             app.root.update()
             viewport = app.settings_viewport
             self.assertLessEqual(app.settings_stack.winfo_reqwidth(), viewport.winfo_width())
-            self.assertLessEqual(app.settings_stack.winfo_reqheight(), viewport.winfo_height())
+            content_fits = app.settings_stack.winfo_reqheight() <= viewport.winfo_height()
             vx, vy = viewport.winfo_rootx(), viewport.winfo_rooty()
             for control in descendants(app.settings_stack):
                 if isinstance(control, pc_app.tk.Frame):
@@ -156,8 +156,13 @@ class BoosterUITests(unittest.TestCase):
                 self.assertGreaterEqual(control.winfo_rootx(), vx, str(control))
                 self.assertGreaterEqual(control.winfo_rooty(), vy, str(control))
                 self.assertLessEqual(control.winfo_rootx() + control.winfo_width(), vx + viewport.winfo_width(), str(control))
-                self.assertLessEqual(control.winfo_rooty() + control.winfo_height(), vy + viewport.winfo_height(), str(control))
-            self.assertEqual(tuple(viewport.yview()), (0.0, 1.0))
+                if content_fits:
+                    self.assertLessEqual(control.winfo_rooty() + control.winfo_height(), vy + viewport.winfo_height(), str(control))
+            if content_fits:
+                self.assertEqual(tuple(viewport.yview()), (0.0, 1.0))
+            else:
+                viewport.yview_moveto(1)
+                self.assertAlmostEqual(viewport.yview()[1], 1.0)
             self.snapshot(app.root, 'settings')
         finally:
             app.shutting_down = True

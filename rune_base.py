@@ -1310,11 +1310,15 @@ class MapleTimerApp:
             height = max(1, int(self.root.winfo_height()))
             if hasattr(self, "backdrop"):
                 self._draw_backdrop()
+                # Resizing the embedded card schedules another geometry pass.
+                # Settle its child canvases before positioning the resize lines.
+                self.root.update_idletasks()
             if getattr(self, "current_page", None) == "monitor":
                 self._layout_monitor_page()
             elif getattr(self, "current_page", None) == "settings":
                 self._layout_settings_page()
             self._apply_rounded_window(self.root, width, height, max(28, int(42 * self._monitor_scale())))
+            self._draw_resize_grip()
         except tk.TclError:
             pass
 
@@ -2424,13 +2428,49 @@ class MapleTimerApp:
         }
         self.monitor_page = self.pages["monitor"]
         self._show_page("monitor")
-        self.resize_grip = tk.Canvas(self.card, width=24, height=24, bg=c["surface"], highlightthickness=0, bd=0, cursor="size_nw_se")
-        for offset in (6, 12, 18):
-            self.resize_grip.create_line(offset, 21, 21, offset, fill=c["muted_2"], width=1)
-        self.resize_grip.place(relx=1.0, rely=1.0, anchor="se", x=-10, y=-10)
-        self.resize_grip.bind("<ButtonPress-1>", self._start_resize)
-        self.resize_grip.bind("<B1-Motion>", self._resize)
-        self.resize_grip.bind("<ButtonRelease-1>", self._end_resize)
+        self.root.after_idle(self._draw_resize_grip)
+
+    def _draw_resize_grip(self):
+        """Draw the resize handle directly on the visible page, without a widget background."""
+        canvas = (self.settings_backdrop if self.current_page == "settings"
+                  else self.monitor_backdrop)
+        if not canvas.winfo_ismapped() or canvas.winfo_width() <= 1 or canvas.winfo_height() <= 1:
+            return
+        # Both pages share a window-relative anchor. The settings viewport has
+        # extra top/bottom padding and a scroll origin, so its local bottom-right
+        # corner is not the same point as the monitor canvas's corner.
+        x = canvas.canvasx(self.root.winfo_rootx() + self.root.winfo_width()
+                          - 48 - canvas.winfo_rootx())
+        y = canvas.canvasy(self.root.winfo_rooty() + self.root.winfo_height()
+                          - 46 - canvas.winfo_rooty())
+        lines = canvas.find_withtag("resize_grip")
+        if len(lines) != 3:
+            canvas.delete("resize_grip")
+            lines = [canvas.create_line(0, 0, 0, 0, fill=self.colors["muted_2"],
+                                        width=1, tags="resize_grip") for _ in range(3)]
+        for line, offset in zip(lines, (6, 12, 18)):
+            canvas.coords(line, x + offset, y + 21, x + 21, y + offset)
+            canvas.itemconfigure(line, fill="", width=7)
+        if not hasattr(self, 'resize_grip_photo'):
+            image = Image.new('RGBA', (24 * 4, 24 * 4))
+            draw = ImageDraw.Draw(image)
+            for offset in (6, 12, 18):
+                draw.line((offset * 4, 21 * 4, 21 * 4, offset * 4),
+                          fill=self.colors['muted_2'], width=4)
+            self.resize_grip_photo = ImageTk.PhotoImage(image.resize((24, 24), Image.Resampling.LANCZOS))
+        art = canvas.find_withtag('resize_grip_art')
+        if art:
+            canvas.coords(art[0], x, y)
+        else:
+            canvas.create_image(x, y, image=self.resize_grip_photo, anchor='nw', tags='resize_grip_art')
+        canvas.tag_bind('resize_grip_art', '<ButtonPress-1>', self._start_resize)
+        canvas.tag_bind('resize_grip_art', '<Enter>', lambda _e: canvas.configure(cursor='size_nw_se'))
+        canvas.tag_bind('resize_grip_art', '<Leave>', lambda _e: canvas.configure(cursor=''))
+        canvas.tag_bind("resize_grip", "<ButtonPress-1>", self._start_resize)
+        canvas.tag_bind("resize_grip", "<Enter>", lambda _e: canvas.configure(cursor="size_nw_se"))
+        canvas.tag_bind("resize_grip", "<Leave>", lambda _e: canvas.configure(cursor=""))
+        canvas.tag_raise("resize_grip")
+        canvas.tag_raise("resize_grip_art")
 
     def _entry_block(self, parent, label, variable, unit):
         c = self.colors
@@ -2552,6 +2592,7 @@ class MapleTimerApp:
         # The page Configure event can precede its child canvas resize. Redraw
         # once the canvas has its final width so the timer uses the new center.
         self.countdown_canvas.bind("<Configure>", self._draw_countdown_display)
+        self.countdown_canvas.bind("<Map>", lambda _event: self.root.after_idle(self._draw_resize_grip))
         self._draw_countdown_display()
 
         self.auto_detect_status_var = tk.StringVar(value="수동 지정 대기")
@@ -2567,9 +2608,24 @@ class MapleTimerApp:
     def _build_settings_page(self):
         c = self.colors
         page = tk.Frame(self.page_shell, bg=c["surface"])
+        # Match the monitor's full-page drawing area. Keep the resize lines on
+        # this canvas, outside the scrolling content's embedded Frame.
+        self.settings_backdrop = tk.Canvas(page, bg=c["surface"], highlightthickness=0, bd=0)
+        self.settings_backdrop.place(x=0, y=0, relwidth=1, relheight=1)
+        self.settings_backdrop.create_image(0, 0, image=self.monitor_glow_image, anchor="nw")
+        self.settings_backdrop.bind("<Configure>", lambda _event: self.root.after_idle(self._draw_resize_grip))
+        self.settings_backdrop.bind("<B1-Motion>", lambda event: self._resize(event)
+                                    if getattr(self, "resizing_main_window", False) else None)
+        self.settings_backdrop.bind("<ButtonRelease-1>", lambda event: self._end_resize(event)
+                                    if getattr(self, "resizing_main_window", False) else None)
         viewport = tk.Canvas(page, bg=c["surface"], highlightthickness=0)
-        viewport.pack(side="left", fill="both", expand=True, padx=0, pady=(36 if LOW_RES else 64, 4))
+        top_margin = 36 if LOW_RES else 64
+        viewport.place(x=0, y=top_margin, relwidth=1, relheight=1, height=-(top_margin + 36))
         viewport.configure(yscrollincrement=18)
+        viewport.bind("<B1-Motion>", lambda event: self._resize(event)
+                      if getattr(self, "resizing_main_window", False) else None)
+        viewport.bind("<ButtonRelease-1>", lambda event: self._end_resize(event)
+                      if getattr(self, "resizing_main_window", False) else None)
         stack = tk.Frame(viewport, bg=c["surface"])
         stack_item = viewport.create_window(0, 0, anchor="n", window=stack)
         self.settings_viewport, self.settings_stack = viewport, stack
@@ -2682,6 +2738,7 @@ class MapleTimerApp:
         viewport.configure(scrollregion=(0, 0, width, max(height, top + content_height)))
         if top + content_height <= height:
             viewport.yview_moveto(0)
+        self.root.after_idle(self._draw_resize_grip)
 
     def _scroll_settings(self, event):
         if getattr(self, "current_page", None) != "settings":
@@ -2698,6 +2755,7 @@ class MapleTimerApp:
         else:
             return "break"
         viewport.yview_scroll(units, "units")
+        self._draw_resize_grip()
         return "break"
 
     def _set_ui_profile(self, profile):
@@ -2762,7 +2820,9 @@ class MapleTimerApp:
         except tk.TclError:
             page_height = int((APP_HEIGHT - 100) * scale)
         dock_y = int(720 * scale)
-        dock_y = min(dock_y, max(int(570 * scale), page_height - dock_height - int(30 * scale)))
+        # The dock is a separate child canvas and always covers drawing on the
+        # page canvas. Keep a fixed strip below it for the unscaled resize lines.
+        dock_y = max(0, min(dock_y, page_height - dock_height - 36))
         self.bottom_dock.configure(width=dock_width, height=dock_height)
         self.bottom_dock.place_configure(relx=0.5, y=dock_y, anchor="n")
         self._draw_bottom_dock()
@@ -2797,6 +2857,10 @@ class MapleTimerApp:
         self.last_countdown_progress_update_at = time.monotonic()
         self._bind_countdown_card_tags(canvas)
         self._draw_rune_status_bar()
+        if hasattr(self, "current_page"):
+            # The monitor canvas is managed by place; its height can settle
+            # after the page's Configure callback has already drawn the timer.
+            self.root.after_idle(self._draw_resize_grip)
 
     def _draw_countdown_ring(self, _event=None):
         self._draw_countdown_display(_event)
@@ -3428,6 +3492,7 @@ class MapleTimerApp:
         self.current_page = name
         if name == "settings":
             self._layout_settings_page()
+        self.root.after_idle(self._draw_resize_grip)
 
     def _rebuild_timer_rows(self):
         if not hasattr(self, "timers_list"):
@@ -3568,6 +3633,8 @@ class MapleTimerApp:
             return False
 
     def _drag(self, event):
+        if getattr(self, "resizing_main_window", False):
+            return self._resize(event)
         if getattr(self, "drag_blocked", False) or not getattr(self, "dragging_main_window", False):
             return "break"
         x = int(event.x_root) - int(getattr(self, "drag_offset_x", 0))
@@ -3577,6 +3644,8 @@ class MapleTimerApp:
         return "break"
 
     def _end_drag(self, event):
+        if getattr(self, "resizing_main_window", False):
+            return self._end_resize(event)
         if getattr(self, "drag_blocked", False):
             self.drag_blocked = False
             self.dragging_main_window = False

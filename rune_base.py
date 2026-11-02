@@ -417,6 +417,55 @@ class TimerItem:
         return item
 
 
+def draw_smooth_oval(canvas, x1, y1, x2, y2, fill=None, outline=None, width=1):
+    """Keep Canvas hit targets while rendering circles with supersampled edges."""
+    stroke = width if outline else 0
+    left, top = math.floor(x1 - stroke / 2) - 2, math.floor(y1 - stroke / 2) - 2
+    right, bottom = math.ceil(x2 + stroke / 2) + 2, math.ceil(y2 + stroke / 2) + 2
+    scale = 4
+    image = Image.new("RGBA", ((right - left) * scale, (bottom - top) * scale))
+    draw = ImageDraw.Draw(image)
+    # Pillow draws the stroke inward; Tk centers it on the oval bounds.
+    bounds = ((x1 - left - stroke / 2) * scale, (y1 - top - stroke / 2) * scale,
+              (x2 - left + stroke / 2) * scale, (y2 - top + stroke / 2) * scale)
+    draw.ellipse(bounds, fill=fill or None, outline=outline or None,
+                 width=max(1, round(stroke * scale)))
+    photo = ImageTk.PhotoImage(image.resize((right - left, bottom - top), Image.Resampling.LANCZOS))
+    # Canvas.delete does not release Python references; discard obsolete images
+    # whenever a control redraws so repeated slider/toggle updates stay bounded.
+    live_items = set(canvas.find_all())
+    photos = {item: value for item, value in getattr(canvas, '_smooth_oval_photos', {}).items()
+              if item in live_items}
+    item = canvas.create_image(left, top, image=photo, anchor="nw")
+    photos[item] = photo
+    canvas._smooth_oval_photos = photos
+    return item
+
+
+def draw_smooth_rounded_rect(canvas, x1, y1, x2, y2, radius, **kwargs):
+    fill, outline = kwargs.pop('fill', None), kwargs.pop('outline', None)
+    line_width = kwargs.pop('width', 1)
+    stroke = line_width if outline else 0
+    tags = kwargs.pop('tags', kwargs.pop('tag', ()))
+    left, top = math.floor(x1-stroke/2)-2, math.floor(y1-stroke/2)-2
+    right, bottom = math.ceil(x2+stroke/2)+2, math.ceil(y2+stroke/2)+2
+    scale = 4
+    image = Image.new('RGBA', (max(1, right-left)*scale, max(1, bottom-top)*scale))
+    if x2 > x1 and y2 > y1:
+        ImageDraw.Draw(image).rounded_rectangle(
+            ((x1-left-stroke/2)*scale, (y1-top-stroke/2)*scale,
+             (x2-left+stroke/2)*scale, (y2-top+stroke/2)*scale),
+            radius=max(0, radius)*scale, fill=fill or None, outline=outline or None,
+            width=max(1, round(stroke*scale)))
+    photo = ImageTk.PhotoImage(image.resize((max(1, right-left), max(1, bottom-top)), Image.Resampling.LANCZOS))
+    live = set(canvas.find_all())
+    photos = {item: value for item, value in getattr(canvas, '_rounded_photos', {}).items() if item in live}
+    item = canvas.create_image(left, top, image=photo, anchor='nw', tags=tags, **kwargs)
+    photos[item] = photo
+    canvas._rounded_photos = photos
+    return item
+
+
 class RoundedButton(tk.Canvas):
     def __init__(self, parent, text, command, width=76, height=32, radius=16, bg="#50edb1", fg="#050706", hover="#25d999", font=(FONT_FAMILY, 10, "bold"), outline=None):
         super().__init__(parent, width=width, height=height, bg=parent["bg"], highlightthickness=0, bd=0, cursor="hand2")
@@ -443,8 +492,7 @@ class RoundedButton(tk.Canvas):
         self.create_text(self.width // 2, self.height // 2, text=self.text, fill=self.fg, font=self.font)
 
     def _rounded_rect(self, x1, y1, x2, y2, radius, **kwargs):
-        points = [x1+radius,y1,x2-radius,y1,x2,y1,x2,y1+radius,x2,y2-radius,x2,y2,x2-radius,y2,x1+radius,y2,x1,y2,x1,y2-radius,x1,y1+radius,x1,y1]
-        self.create_polygon(points, smooth=True, splinesteps=18, **kwargs)
+        return draw_smooth_rounded_rect(self, x1, y1, x2, y2, radius, **kwargs)
 
 
 class ApplyCheckButton(tk.Canvas):
@@ -503,8 +551,7 @@ class ApplyCheckButton(tk.Canvas):
         return ImageTk.PhotoImage(image)
 
     def _rounded_rect(self, x1, y1, x2, y2, radius, **kwargs):
-        points = [x1+radius,y1,x2-radius,y1,x2,y1,x2,y1+radius,x2,y2-radius,x2,y2,x2-radius,y2,x1+radius,y2,x1,y2,x1,y2-radius,x1,y1+radius,x1,y1]
-        self.create_polygon(points, smooth=True, splinesteps=18, **kwargs)
+        return draw_smooth_rounded_rect(self, x1, y1, x2, y2, radius, **kwargs)
 
 
 class IconButton(tk.Canvas):
@@ -586,13 +633,12 @@ class GearButton(tk.Canvas):
             return
         cx, cy = self.width / 2, self.height / 2
         radius = max(8, int(min(self.width, self.height) * 0.17))
-        self.create_oval(cx - radius, cy - radius, cx + radius, cy + radius, outline=self.fg, width=2)
+        draw_smooth_oval(self, cx - radius, cy - radius, cx + radius, cy + radius, outline=self.fg, width=2)
         inner = max(3, int(radius * 0.36))
-        self.create_oval(cx - inner, cy - inner, cx + inner, cy + inner, outline=self.fg, width=2)
+        draw_smooth_oval(self, cx - inner, cy - inner, cx + inner, cy + inner, outline=self.fg, width=2)
 
     def _rounded_rect(self, x1, y1, x2, y2, radius, **kwargs):
-        points = [x1+radius,y1,x2-radius,y1,x2,y1,x2,y1+radius,x2,y2-radius,x2,y2,x2-radius,y2,x1+radius,y2,x1,y2,x1,y2-radius,x1,y1+radius,x1,y1]
-        self.create_polygon(points, smooth=True, splinesteps=18, **kwargs)
+        return draw_smooth_rounded_rect(self, x1, y1, x2, y2, radius, **kwargs)
 
 
 class BackIconButton(tk.Canvas):
@@ -617,14 +663,27 @@ class BackIconButton(tk.Canvas):
     def _draw(self, fill):
         self.delete("all")
         inset = max(2, int(min(self.width, self.height) * 0.04))
-        self.create_oval(inset, inset, self.width - inset, self.height - inset, fill=fill, outline=self.outline, width=2 if self.outline else 0)
+        draw_smooth_oval(self, inset, inset, self.width - inset, self.height - inset, fill=fill, outline=self.outline, width=2 if self.outline else 0)
         cx, cy = self.width / 2, self.height / 2
         scale = min(self.width, self.height) / 106
-        self.create_line(cx + 14 * scale, cy - 21 * scale, cx - 10 * scale, cy, cx + 14 * scale, cy + 21 * scale, fill=self.fg, width=max(4, int(8 * scale)), capstyle=tk.ROUND, joinstyle=tk.ROUND)
+        # Symmetric bounds around the circle center; supersample the arrow too
+        # so odd/even button sizes do not shift its rasterized stroke to one side.
+        raster_scale = 4
+        arrow = Image.new("RGBA", (self.width * raster_scale, self.height * raster_scale))
+        draw = ImageDraw.Draw(arrow)
+        points = [(cx + 12 * scale, cy - 21 * scale),
+                  (cx - 12 * scale, cy), (cx + 12 * scale, cy + 21 * scale)]
+        points = [(round(x * raster_scale), round(y * raster_scale)) for x, y in points]
+        stroke = max(2, 8 * scale) * raster_scale
+        draw.line(points, fill=self.fg, width=round(stroke), joint="curve")
+        for x, y in points:
+            radius = stroke / 2
+            draw.ellipse((x-radius, y-radius, x+radius, y+radius), fill=self.fg)
+        self.arrow_photo = ImageTk.PhotoImage(arrow.resize((self.width, self.height), Image.Resampling.LANCZOS))
+        self.create_image(0, 0, image=self.arrow_photo, anchor="nw")
 
     def _rounded_rect(self, x1, y1, x2, y2, radius, **kwargs):
-        points = [x1+radius,y1,x2-radius,y1,x2,y1,x2,y1+radius,x2,y2-radius,x2,y2,x2-radius,y2,x1+radius,y2,x1,y2,x1,y2-radius,x1,y1+radius,x1,y1]
-        self.create_polygon(points, smooth=True, splinesteps=18, **kwargs)
+        return draw_smooth_rounded_rect(self, x1, y1, x2, y2, radius, **kwargs)
 
 
 class ToggleSwitch(tk.Canvas):
@@ -660,12 +719,11 @@ class ToggleSwitch(tk.Canvas):
         cx = self.width - self.height // 2 if self.value else self.height // 2
         cy = self.height // 2
         knob_fill = "#06100d" if self.value else self.knob
-        self.create_oval(cx - knob_radius, cy - knob_radius, cx + knob_radius, cy + knob_radius, fill=knob_fill, outline=knob_fill)
+        draw_smooth_oval(self, cx - knob_radius, cy - knob_radius, cx + knob_radius, cy + knob_radius, fill=knob_fill, outline=knob_fill)
         self.create_text(self.width * (0.32 if self.value else 0.68), cy, text="ON" if self.value else "OFF", fill="#06100d" if self.value else "#8a9094", font=(FONT_FAMILY, 7, "bold"))
 
     def _rounded_rect(self, x1, y1, x2, y2, radius, **kwargs):
-        points = [x1+radius,y1,x2-radius,y1,x2,y1,x2,y1+radius,x2,y2-radius,x2,y2,x2-radius,y2,x1+radius,y2,x1,y2,x1,y2-radius,x1,y1+radius,x1,y1]
-        self.create_polygon(points, smooth=True, splinesteps=18, **kwargs)
+        return draw_smooth_rounded_rect(self, x1, y1, x2, y2, radius, **kwargs)
 
 
 class VolumeSlider(tk.Canvas):
@@ -712,12 +770,11 @@ class VolumeSlider(tk.Canvas):
             self._rounded_rect(bar_x, bar_y, bar_x + fill_w, bar_y + bar_h, radius, fill="", outline="")
         knob_x = bar_x + fill_w
         knob_r = 8
-        self.create_oval(knob_x - knob_r, self.height // 2 - knob_r, knob_x + knob_r, self.height // 2 + knob_r, fill="#f4f6f7", outline="#f4f6f7")
+        draw_smooth_oval(self, knob_x - knob_r, self.height // 2 - knob_r, knob_x + knob_r, self.height // 2 + knob_r, fill="#f4f6f7", outline="#f4f6f7")
         self.create_text(self.width - 21, self.height // 2, text=str(self.value), fill="#4af1ae", font=(FONT_FAMILY, 9, "bold"))
 
     def _rounded_rect(self, x1, y1, x2, y2, radius, **kwargs):
-        points = [x1+radius,y1,x2-radius,y1,x2,y1,x2,y1+radius,x2,y2-radius,x2,y2,x2-radius,y2,x1+radius,y2,x1,y2,x1,y2-radius,x1,y1+radius,x1,y1]
-        self.create_polygon(points, smooth=True, splinesteps=18, **kwargs)
+        return draw_smooth_rounded_rect(self, x1, y1, x2, y2, radius, **kwargs)
 
 
 class MinuteSegmentedControl(tk.Canvas):
@@ -766,8 +823,7 @@ class MinuteSegmentedControl(tk.Canvas):
             )
 
     def _rounded_rect(self, x1, y1, x2, y2, radius, **kwargs):
-        points = [x1+radius,y1,x2-radius,y1,x2,y1,x2,y1+radius,x2,y2-radius,x2,y2,x2-radius,y2,x1+radius,y2,x1,y2,x1,y2-radius,x1,y1+radius,x1,y1]
-        self.create_polygon(points, smooth=True, splinesteps=18, **kwargs)
+        return draw_smooth_rounded_rect(self, x1, y1, x2, y2, radius, **kwargs)
 
 
 def parse_booster_use_count(value):
@@ -826,8 +882,7 @@ class ScanButton(tk.Canvas):
         self.create_text(self.width * 0.58, cy, text=self.text, fill=self.fg, font=(FONT_FAMILY, 12, "bold"), anchor="center")
 
     def _rounded_rect(self, x1, y1, x2, y2, radius, **kwargs):
-        points = [x1+radius,y1,x2-radius,y1,x2,y1,x2,y1+radius,x2,y2-radius,x2,y2,x2-radius,y2,x1+radius,y2,x1,y2,x1,y2-radius,x1,y1+radius,x1,y1]
-        self.create_polygon(points, smooth=True, splinesteps=24, **kwargs)
+        return draw_smooth_rounded_rect(self, x1, y1, x2, y2, radius, **kwargs)
 
 
 class RegionSelector(tk.Toplevel):
@@ -1310,11 +1365,15 @@ class MapleTimerApp:
             height = max(1, int(self.root.winfo_height()))
             if hasattr(self, "backdrop"):
                 self._draw_backdrop()
+                # Resizing the embedded card schedules another geometry pass.
+                # Settle its child canvases before positioning the resize lines.
+                self.root.update_idletasks()
             if getattr(self, "current_page", None) == "monitor":
                 self._layout_monitor_page()
             elif getattr(self, "current_page", None) == "settings":
                 self._layout_settings_page()
             self._apply_rounded_window(self.root, width, height, max(28, int(42 * self._monitor_scale())))
+            self._draw_resize_grip()
         except tk.TclError:
             pass
 
@@ -1431,6 +1490,14 @@ class MapleTimerApp:
                 style = (style & ~(ws_caption | ws_thickframe | ws_maximizebox)) | ws_sysmenu | ws_minimizebox
                 user32.SetWindowLongW(hwnd, gwl_style, style)
             user32.SetWindowPos(hwnd, 0, 0, 0, 0, 0, swp_nomove | swp_nosize | swp_nozorder | swp_framechanged)
+            # Hide the native DWM border; the app draws its own rounded surface.
+            try:
+                no_border = ctypes.c_uint32(0xFFFFFFFE)  # DWMWA_COLOR_NONE
+                ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                    hwnd, 34, ctypes.byref(no_border), ctypes.sizeof(no_border)
+                )
+            except (AttributeError, OSError):
+                pass
         except Exception:
             pass
         self._refresh_windows_taskbar_identity()
@@ -1514,6 +1581,23 @@ class MapleTimerApp:
     def _move_main_window(self, x, y):
         x, y = int(x), int(y)
         self.app_position = (x, y)
+        if sys.platform.startswith("win"):
+            try:
+                user32 = ctypes.WinDLL("user32", use_last_error=True)
+                user32.GetParent.argtypes = [wintypes.HWND]
+                user32.GetParent.restype = wintypes.HWND
+                user32.SetWindowPos.argtypes = [
+                    wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
+                    ctypes.c_int, ctypes.c_int, wintypes.UINT,
+                ]
+                user32.SetWindowPos.restype = wintypes.BOOL
+                hwnd = user32.GetParent(self.root.winfo_id()) or self.root.winfo_id()
+                # Preserve the native size and activation state while moving.
+                # Tk geometry can reuse stale caption insets after chrome changes.
+                if user32.SetWindowPos(hwnd, None, x, y, 0, 0, 0x0015):
+                    return  # SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE
+            except (AttributeError, OSError, tk.TclError):
+                pass
         try:
             self.root.geometry(f"+{x}+{y}")
         except tk.TclError:
@@ -1627,8 +1711,36 @@ class MapleTimerApp:
         try:
             window.update_idletasks()
             hwnd = ctypes.windll.user32.GetParent(window.winfo_id()) or window.winfo_id()
-            region = ctypes.windll.gdi32.CreateRoundRectRgn(0, 0, width + 1, height + 1, radius, radius)
-            ctypes.windll.user32.SetWindowRgn(hwnd, region, True)
+            # The region belongs to the outer HWND, not Tk's client area.
+            # A client-sized region clips different portions of the surface as
+            # Windows changes non-client insets on focus/DPI transitions.
+            rect = wintypes.RECT()
+            if not ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+                return
+            outer_width = rect.right - rect.left
+            outer_height = rect.bottom - rect.top
+            if outer_width <= 0 or outer_height <= 0:
+                return
+            if window is self.root:
+                # Match the client-area mask used by the drag snapshot and
+                # restore overlay. Otherwise pressing the window replaces it
+                # with an inset snapshot and makes the app appear to shrink.
+                origin = wintypes.POINT(0, 0)
+                if not ctypes.windll.user32.ClientToScreen(window.winfo_id(), ctypes.byref(origin)):
+                    return
+                left, top, right, bottom = self._main_surface_bounds(width, height)
+                offset_x = origin.x - rect.left
+                offset_y = origin.y - rect.top
+                region = ctypes.windll.gdi32.CreateRoundRectRgn(
+                    offset_x + left, offset_y + top,
+                    offset_x + right + 1, offset_y + bottom + 1, 56, 56
+                )
+            else:
+                region = ctypes.windll.gdi32.CreateRoundRectRgn(
+                    0, 0, outer_width + 1, outer_height + 1, radius, radius
+                )
+            if region and not ctypes.windll.user32.SetWindowRgn(hwnd, region, True):
+                ctypes.windll.gdi32.DeleteObject(region)
         except Exception:
             pass
 
@@ -1646,7 +1758,16 @@ class MapleTimerApp:
         ImageDraw.Draw(artwork).text((artwork.width / 2, 650), "by 꼬맹협회",
                                    font=credit_font, fill="#176B5B", anchor="mm")
         artwork = artwork.resize((width, height), Image.Resampling.LANCZOS)
-        artwork.putalpha(artwork.getchannel("A").point(lambda a: 255 if a >= 128 else 0))
+        # Replace the generated asset's noisy silhouette with a clean geometric
+        # card. Preserve a hard outer alpha for Tk's transparent-color window;
+        # semi-transparent outer pixels would blend against its magenta key.
+        mask = Image.new("L", (width * 4, height * 4))
+        ImageDraw.Draw(mask).rounded_rectangle(
+            (12, 12, (width - 4) * 4, (height - 4) * 4),
+            radius=round(width * 0.19 * 4), fill=255)
+        mask = mask.resize((width, height), Image.Resampling.LANCZOS)
+        mask = mask.point(lambda value: 255 if value >= 128 else 0)
+        artwork.putalpha(mask)
         self.splash = tk.Toplevel(self.root)
         self.splash.overrideredirect(True)
         self.splash.attributes("-topmost", True)
@@ -2348,12 +2469,12 @@ class MapleTimerApp:
         self.card_window = self.backdrop.create_window(12, 12, anchor="nw", window=self.card)
         self.surface_widgets.append(self.card)
 
-        titlebar = tk.Frame(self.card, bg=c["surface_alt"], padx=ui_px(26), pady=0, height=ui_px(76))
+        titlebar = tk.Frame(self.card, bg=c["surface"], padx=ui_px(26), pady=0, height=ui_px(76))
         titlebar.pack(fill="x")
         titlebar.pack_propagate(False)
         self._bind_drag(titlebar)
         self.surface_widgets.append(titlebar)
-        dots = tk.Frame(titlebar, bg=c["surface_alt"])
+        dots = tk.Frame(titlebar, bg=c["surface"])
         dots.pack(side="left", pady=(ui_px(26),0), anchor="n")
         self._dot(dots, c["red"], self._quit_app).pack(side="left", padx=(0,ui_px(13)))
         self._dot(dots, c["yellow"], self._minimize).pack(side="left", padx=(0,ui_px(13)))
@@ -2371,11 +2492,49 @@ class MapleTimerApp:
         }
         self.monitor_page = self.pages["monitor"]
         self._show_page("monitor")
-        self.resize_grip = tk.Canvas(self.card, width=24, height=24, bg=c["surface"], highlightthickness=0, bd=0, cursor="size_nw_se")
-        self.resize_grip.place(relx=1.0, rely=1.0, anchor="se", x=-10, y=-10)
-        self.resize_grip.bind("<ButtonPress-1>", self._start_resize)
-        self.resize_grip.bind("<B1-Motion>", self._resize)
-        self.resize_grip.bind("<ButtonRelease-1>", self._end_resize)
+        self.root.after_idle(self._draw_resize_grip)
+
+    def _draw_resize_grip(self):
+        """Draw the resize handle directly on the visible page, without a widget background."""
+        canvas = (self.settings_backdrop if self.current_page == "settings"
+                  else self.monitor_backdrop)
+        if not canvas.winfo_ismapped() or canvas.winfo_width() <= 1 or canvas.winfo_height() <= 1:
+            return
+        # Both pages share a window-relative anchor. The settings viewport has
+        # extra top/bottom padding and a scroll origin, so its local bottom-right
+        # corner is not the same point as the monitor canvas's corner.
+        x = canvas.canvasx(self.root.winfo_rootx() + self.root.winfo_width()
+                          - 48 - canvas.winfo_rootx())
+        y = canvas.canvasy(self.root.winfo_rooty() + self.root.winfo_height()
+                          - 46 - canvas.winfo_rooty())
+        lines = canvas.find_withtag("resize_grip")
+        if len(lines) != 3:
+            canvas.delete("resize_grip")
+            lines = [canvas.create_line(0, 0, 0, 0, fill=self.colors["muted_2"],
+                                        width=1, tags="resize_grip") for _ in range(3)]
+        for line, offset in zip(lines, (6, 12, 18)):
+            canvas.coords(line, x + offset, y + 21, x + 21, y + offset)
+            canvas.itemconfigure(line, fill="", width=7)
+        if not hasattr(self, 'resize_grip_photo'):
+            image = Image.new('RGBA', (24 * 4, 24 * 4))
+            draw = ImageDraw.Draw(image)
+            for offset in (6, 12, 18):
+                draw.line((offset * 4, 21 * 4, 21 * 4, offset * 4),
+                          fill=self.colors['muted_2'], width=4)
+            self.resize_grip_photo = ImageTk.PhotoImage(image.resize((24, 24), Image.Resampling.LANCZOS))
+        art = canvas.find_withtag('resize_grip_art')
+        if art:
+            canvas.coords(art[0], x, y)
+        else:
+            canvas.create_image(x, y, image=self.resize_grip_photo, anchor='nw', tags='resize_grip_art')
+        canvas.tag_bind('resize_grip_art', '<ButtonPress-1>', self._start_resize)
+        canvas.tag_bind('resize_grip_art', '<Enter>', lambda _e: canvas.configure(cursor='size_nw_se'))
+        canvas.tag_bind('resize_grip_art', '<Leave>', lambda _e: canvas.configure(cursor=''))
+        canvas.tag_bind("resize_grip", "<ButtonPress-1>", self._start_resize)
+        canvas.tag_bind("resize_grip", "<Enter>", lambda _e: canvas.configure(cursor="size_nw_se"))
+        canvas.tag_bind("resize_grip", "<Leave>", lambda _e: canvas.configure(cursor=""))
+        canvas.tag_raise("resize_grip")
+        canvas.tag_raise("resize_grip_art")
 
     def _entry_block(self, parent, label, variable, unit):
         c = self.colors
@@ -2494,6 +2653,10 @@ class MapleTimerApp:
 
         self.countdown_remaining = int(self.warning_loop_seconds)
         self.countdown_canvas = self.monitor_backdrop
+        # The page Configure event can precede its child canvas resize. Redraw
+        # once the canvas has its final width so the timer uses the new center.
+        self.countdown_canvas.bind("<Configure>", self._draw_countdown_display)
+        self.countdown_canvas.bind("<Map>", lambda _event: self.root.after_idle(self._draw_resize_grip))
         self._draw_countdown_display()
 
         self.auto_detect_status_var = tk.StringVar(value="수동 지정 대기")
@@ -2501,6 +2664,7 @@ class MapleTimerApp:
         self.bottom_dock = tk.Canvas(page, width=620, height=160, bg=c["surface"], highlightthickness=0, bd=0, cursor="hand2")
         self.bottom_dock.place(relx=0.5, y=720, anchor="n")
         self.bottom_dock.bind("<Button-1>", self._handle_bottom_dock_click)
+        self.bottom_dock.bind("<Configure>", lambda _event: self._draw_bottom_dock())
         self._draw_bottom_dock()
 
         return page
@@ -2508,9 +2672,24 @@ class MapleTimerApp:
     def _build_settings_page(self):
         c = self.colors
         page = tk.Frame(self.page_shell, bg=c["surface"])
+        # Match the monitor's full-page drawing area. Keep the resize lines on
+        # this canvas, outside the scrolling content's embedded Frame.
+        self.settings_backdrop = tk.Canvas(page, bg=c["surface"], highlightthickness=0, bd=0)
+        self.settings_backdrop.place(x=0, y=0, relwidth=1, relheight=1)
+        self.settings_backdrop.create_image(0, 0, image=self.monitor_glow_image, anchor="nw")
+        self.settings_backdrop.bind("<Configure>", lambda _event: self.root.after_idle(self._draw_resize_grip))
+        self.settings_backdrop.bind("<B1-Motion>", lambda event: self._resize(event)
+                                    if getattr(self, "resizing_main_window", False) else None)
+        self.settings_backdrop.bind("<ButtonRelease-1>", lambda event: self._end_resize(event)
+                                    if getattr(self, "resizing_main_window", False) else None)
         viewport = tk.Canvas(page, bg=c["surface"], highlightthickness=0)
-        viewport.pack(fill="both", expand=True, padx=0, pady=(36 if LOW_RES else 64, 4))
+        top_margin = 36 if LOW_RES else 64
+        viewport.place(x=0, y=top_margin, relwidth=1, relheight=1, height=-(top_margin + 36))
         viewport.configure(yscrollincrement=18)
+        viewport.bind("<B1-Motion>", lambda event: self._resize(event)
+                      if getattr(self, "resizing_main_window", False) else None)
+        viewport.bind("<ButtonRelease-1>", lambda event: self._end_resize(event)
+                      if getattr(self, "resizing_main_window", False) else None)
         stack = tk.Frame(viewport, bg=c["surface"])
         stack_item = viewport.create_window(0, 0, anchor="n", window=stack)
         self.settings_viewport, self.settings_stack = viewport, stack
@@ -2523,10 +2702,13 @@ class MapleTimerApp:
         columns = tk.Frame(panel, bg=c["panel"])
         columns.pack(fill="x")
         left = tk.Frame(columns, bg=c["panel"])
-        left.pack(side="left", anchor="n")
-        tk.Frame(columns, bg=c["line"], width=1).pack(side="left", fill="y", padx=5 if LOW_RES else 18)
+        left.grid(row=0, column=0, sticky="nw")
+        divider = tk.Frame(columns, bg=c["line"], width=1)
+        divider.grid(row=0, column=1, sticky="ns", padx=5 if LOW_RES else 18)
         right = tk.Frame(columns, bg=c["panel"])
-        right.pack(side="left", anchor="n")
+        right.grid(row=0, column=2, sticky="nw")
+        self.settings_columns = (panel, left, divider, right)
+        self.settings_single_column = False
         tk.Label(left, text="화면 크기", bg=c["panel"], fg=c["text"],
                  font=self._settings_font(9 if LOW_RES else 10, "bold")).pack(anchor="w")
         profile_row = tk.Frame(left, bg=c["panel"])
@@ -2596,6 +2778,22 @@ class MapleTimerApp:
         stack = self.settings_stack
         width = max(1, viewport.winfo_width())
         height = max(1, viewport.winfo_height())
+        panel, left, divider, right = self.settings_columns
+        two_column_width = (left.winfo_reqwidth() + right.winfo_reqwidth()
+                            + 1 + 2 * (5 if LOW_RES else 18)
+                            + 2 * (5 if LOW_RES else 15))
+        single_column = width < two_column_width
+        if single_column != self.settings_single_column:
+            self.settings_single_column = single_column
+            if single_column:
+                divider.grid_remove()
+                right.grid_configure(row=1, column=0, pady=(12, 0))
+            else:
+                divider.grid()
+                right.grid_configure(row=0, column=2, pady=0)
+            # Grid dimensions settle before recalculating centering and scrolling.
+            viewport.after_idle(self._center_settings_content)
+            return
         content_height = stack.winfo_reqheight()
         page = viewport.master
         # Center in the page when it fits; keep the first row reachable when tall.
@@ -2604,6 +2802,7 @@ class MapleTimerApp:
         viewport.configure(scrollregion=(0, 0, width, max(height, top + content_height)))
         if top + content_height <= height:
             viewport.yview_moveto(0)
+        self.root.after_idle(self._draw_resize_grip)
 
     def _scroll_settings(self, event):
         if getattr(self, "current_page", None) != "settings":
@@ -2620,6 +2819,7 @@ class MapleTimerApp:
         else:
             return "break"
         viewport.yview_scroll(units, "units")
+        self._draw_resize_grip()
         return "break"
 
     def _set_ui_profile(self, profile):
@@ -2684,7 +2884,9 @@ class MapleTimerApp:
         except tk.TclError:
             page_height = int((APP_HEIGHT - 100) * scale)
         dock_y = int(720 * scale)
-        dock_y = min(dock_y, max(int(570 * scale), page_height - dock_height - int(30 * scale)))
+        # The dock is a separate child canvas and always covers drawing on the
+        # page canvas. Keep a fixed strip below it for the unscaled resize lines.
+        dock_y = max(0, min(dock_y, page_height - dock_height - 36))
         self.bottom_dock.configure(width=dock_width, height=dock_height)
         self.bottom_dock.place_configure(relx=0.5, y=dock_y, anchor="n")
         self._draw_bottom_dock()
@@ -2719,6 +2921,10 @@ class MapleTimerApp:
         self.last_countdown_progress_update_at = time.monotonic()
         self._bind_countdown_card_tags(canvas)
         self._draw_rune_status_bar()
+        if hasattr(self, "current_page"):
+            # The monitor canvas is managed by place; its height can settle
+            # after the page's Configure callback has already drawn the timer.
+            self.root.after_idle(self._draw_resize_grip)
 
     def _draw_countdown_ring(self, _event=None):
         self._draw_countdown_display(_event)
@@ -2810,12 +3016,17 @@ class MapleTimerApp:
         draw.rectangle((0, 0, width, int(height * 0.55)), fill=(255, 255, 255, 3))
         glow = glow.filter(ImageFilter.GaussianBlur(46))
         base.alpha_composite(glow)
-        mask = Image.new("L", (width, height), 0)
+        edge_scale = 4
+        bounds = tuple(value * edge_scale for value in (1, 1, width - 2, height - 2))
+        mask = Image.new("L", (width * edge_scale, height * edge_scale), 0)
         mask_draw = ImageDraw.Draw(mask)
-        mask_draw.rounded_rectangle((1, 1, width - 2, height - 2), radius=radius, fill=255)
+        mask_draw.rounded_rectangle(bounds, radius=radius * edge_scale, fill=255)
+        mask = mask.resize((width, height), Image.Resampling.LANCZOS)
         image.alpha_composite(Image.composite(base, Image.new("RGBA", (width, height), (0, 0, 0, 0)), mask))
-        border = ImageDraw.Draw(image)
-        border.rounded_rectangle((1, 1, width - 2, height - 2), radius=radius, outline=(43, 50, 52, 225), width=2)
+        border_image = Image.new("RGBA", (width * edge_scale, height * edge_scale))
+        ImageDraw.Draw(border_image).rounded_rectangle(bounds, radius=radius * edge_scale,
+                                                       outline=(43, 50, 52, 225), width=2 * edge_scale)
+        image.alpha_composite(border_image.resize((width, height), Image.Resampling.LANCZOS))
         return ImageTk.PhotoImage(image)
 
     def _make_countdown_progress_image(self, width, height, progress):
@@ -3020,8 +3231,8 @@ class MapleTimerApp:
                 cy + math.sin(angle) * outer,
                 **opts,
             )
-        canvas.create_oval(cx - 15, cy - 15, cx + 15, cy + 15, outline=color, width=3)
-        canvas.create_oval(cx - 5, cy - 5, cx + 5, cy + 5, outline=color, width=3)
+        draw_smooth_oval(canvas, cx - 15, cy - 15, cx + 15, cy + 15, outline=color, width=3)
+        draw_smooth_oval(canvas, cx - 5, cy - 5, cx + 5, cy + 5, outline=color, width=3)
 
     def _make_tinted_settings_icon(self, size, color):
         try:
@@ -3115,9 +3326,29 @@ class MapleTimerApp:
         canvas.delete("all")
         width = max(1, int(canvas.winfo_width() or float(canvas.cget("width")) or 620))
         height = max(1, int(canvas.winfo_height() or float(canvas.cget("height")) or 160))
+        # Tk child canvases are opaque. Copy the glow underneath this canvas so
+        # the rectangular widget bounds do not cut a black hole around the dock.
+        background = Image.new("RGBA", (width, height), c["surface"])
+        if hasattr(self, "monitor_glow_pil"):
+            x, y = canvas.winfo_x(), canvas.winfo_y()
+            background.alpha_composite(self.monitor_glow_pil, (-x, -y))
+        # Rasterize fills and borders together at 4x resolution. Tk's smoothed
+        # polygons can produce isolated edge pixels at fractional button bounds.
+        raster_scale = 4
+        surface = Image.new("RGBA", (width * raster_scale, height * raster_scale))
+        draw = ImageDraw.Draw(surface)
+
+        def rounded_surface(bounds, radius, fill, outline, line_width):
+            draw.rounded_rectangle(tuple(round(value) * raster_scale for value in bounds),
+                                   radius=radius * raster_scale, fill=fill, outline=outline,
+                                   width=line_width * raster_scale)
+
         scale = max(MIN_UI_SCALE, min(1.28, width / 620))
         dock_x1, dock_y1, dock_x2, dock_y2 = 0, 4, width, height - 4
-        self._canvas_rounded_rect(canvas, dock_x1 + 2, dock_y1 + 2, dock_x2 - 2, dock_y2 - 2, max(14, int(48 * scale)), fill=(c["panel"]), outline=c["line"], width=2)
+        if width < 8 or height < 16:
+            return  # Geometry has not settled yet.
+        rounded_surface((dock_x1 + 2, dock_y1 + 2, dock_x2 - 3, dock_y2 - 3),
+                        max(14, int(48 * scale)), c["panel"], c["line"], 2)
 
         button_size = max(30, int(106 * scale))
         button_y = height / 2
@@ -3129,13 +3360,14 @@ class MapleTimerApp:
         if getattr(self, "booster_mode_enabled", False):
             centers = {name: (width * fraction, button_y) for name, fraction in
                        (("scan", .17), ("rune", .39), ("booster", .61), ("settings", .83))}
-            button_size = min(button_size, width * .19)
+            button_size = min(button_size, int(width * .19))
+        centers = {name: (round(cx), round(cy)) for name, (cx, cy) in centers.items()}
         self.bottom_dock_regions = {}
         for name, (cx, cy) in centers.items():
-            x1 = cx - button_size / 2
-            y1 = cy - button_size / 2
-            x2 = cx + button_size / 2
-            y2 = cy + button_size / 2
+            x1 = round(cx - button_size / 2)
+            y1 = round(cy - button_size / 2)
+            x2 = x1 + button_size
+            y2 = y1 + button_size
             self.bottom_dock_regions[name] = (x1, y1, x2, y2)
             outline = "#353a3b"
             line_width = 2
@@ -3145,8 +3377,12 @@ class MapleTimerApp:
             elif name == "booster":
                 outline = "#4af1ae" if getattr(self, "booster_running", False) else "#353a3b"
                 line_width = max(2, int(3 * scale))
-            self._canvas_rounded_rect(canvas, x1, y1, x2, y2, max(8, int(30 * scale)), fill="#101213", outline=outline, width=line_width)
+            rounded_surface((x1, y1, x2, y2), max(8, int(30 * scale)),
+                            "#101213", outline, line_width)
 
+        background.alpha_composite(surface.resize((width, height), Image.Resampling.LANCZOS))
+        self.bottom_dock_background_photo = ImageTk.PhotoImage(background)
+        canvas.create_image(0, 0, image=self.bottom_dock_background_photo, anchor="nw")
         self._draw_scan_icon(canvas, *centers["scan"], "#f4f6f7")
         rune_cx, rune_cy = centers["rune"]
         rune_size = max(5, int(18 * scale))
@@ -3264,6 +3500,7 @@ class MapleTimerApp:
         draw.ellipse((565, 30, 830, 280), fill=(19, 242, 174, 22))
         glow = glow.filter(ImageFilter.GaussianBlur(74))
         image.alpha_composite(glow)
+        self.monitor_glow_pil = image
         return ImageTk.PhotoImage(image)
 
     def _draw_rune_diamond(self, active=False):
@@ -3288,10 +3525,8 @@ class MapleTimerApp:
             return
         should_blur = False
         position_before = self._current_raw_position()
-        size_before = nearest_app_size(
-            getattr(self, "app_size", DEFAULT_APP_SIZE)[0],
-            getattr(self, "app_size", DEFAULT_APP_SIZE)[1],
-        )
+        self.root.update_idletasks()
+        size_before = (self.root.winfo_width(), self.root.winfo_height())
         try:
             should_blur = self.root.state() == "normal" and bool(self.root.winfo_viewable())
         except tk.TclError:
@@ -3312,6 +3547,8 @@ class MapleTimerApp:
     def _restore_page_transition_position(self, position, size=None):
         if getattr(self, "widget_mode_active", False):
             return
+        if getattr(self, "resizing_main_window", False) or getattr(self, "dragging_main_window", False):
+            return
         if position is None:
             return
         try:
@@ -3319,10 +3556,11 @@ class MapleTimerApp:
             self.app_position = (x, y)
             if size:
                 width, height = int(size[0]), int(size[1])
-                self.root.geometry(f"{width}x{height}+{x}+{y}")
-            else:
-                self.root.geometry(f"+{x}+{y}")
+                if (self.root.winfo_width(), self.root.winfo_height()) != (width, height):
+                    self._resize_main_window_nomove(width, height)
+            self._move_main_window(x, y)
             self.root.update_idletasks()
+            self._refresh_resize_surface()
         except (tk.TclError, TypeError, ValueError):
             pass
 
@@ -3341,6 +3579,7 @@ class MapleTimerApp:
         self.current_page = name
         if name == "settings":
             self._layout_settings_page()
+        self.root.after_idle(self._draw_resize_grip)
 
     def _rebuild_timer_rows(self):
         if not hasattr(self, "timers_list"):
@@ -3388,22 +3627,31 @@ class MapleTimerApp:
     def _draw_backdrop(self, _event=None):
         w, h = max(self.backdrop.winfo_width(),1), max(self.backdrop.winfo_height(),1)
         self.backdrop.delete("backdrop")
-        self._rounded_rect(14,18,w-10,h-8,30,fill=self.colors["shadow"],outline="",tag="backdrop")
-        self._rounded_rect(8,8,w-14,h-14,28,fill=self.colors["surface"],outline="#0f1212",tag="backdrop")
+        # Use the same pixel mask as the native window and drag snapshot.
+        # Independently smoothed polygons leave seams at the rounded edges.
+        surface = Image.new("RGBA", (w, h), self.colors["surface"])
+        self.backdrop_surface_photo = ImageTk.PhotoImage(self._clip_restore_blur_to_app_shape(surface))
+        self.backdrop.create_image(0, 0, image=self.backdrop_surface_photo, anchor="nw", tags="backdrop")
         self.backdrop.tag_lower("backdrop")
         self.backdrop.itemconfigure(self.card_window, width=max(w-26,1), height=max(h-24,1))
 
     def _rounded_rect(self, x1, y1, x2, y2, radius, **kwargs):
-        points = [x1+radius,y1,x2-radius,y1,x2,y1,x2,y1+radius,x2,y2-radius,x2,y2,x2-radius,y2,x1+radius,y2,x1,y2,x1,y2-radius,x1,y1+radius,x1,y1]
-        self.backdrop.create_polygon(points, smooth=True, splinesteps=22, **kwargs)
+        return draw_smooth_rounded_rect(self.backdrop, x1, y1, x2, y2, radius, **kwargs)
 
     def _canvas_rounded_rect(self, canvas, x1, y1, x2, y2, radius, **kwargs):
-        points = [x1+radius,y1,x2-radius,y1,x2,y1,x2,y1+radius,x2,y2-radius,x2,y2,x2-radius,y2,x1+radius,y2,x1,y2,x1,y2-radius,x1,y1+radius,x1,y1]
-        canvas.create_polygon(points, smooth=True, splinesteps=24, **kwargs)
+        if LOW_RES and canvas is getattr(self, "widget_canvas", None):
+            # Widget vectors are scaled at the end of _draw_widget_mode, but
+            # raster images must be rendered at their final size beforehand.
+            factor = WIDGET_WIDTH / 384
+            x1, y1, x2, y2 = (value * factor for value in (x1, y1, x2, y2))
+            radius *= factor
+            if 'width' in kwargs:
+                kwargs['width'] *= factor
+        return draw_smooth_rounded_rect(canvas, x1, y1, x2, y2, radius, **kwargs)
 
     def _dot(self, parent, color, command):
         dot = tk.Canvas(parent, width=ui_px(20), height=ui_px(20), bg=parent["bg"], highlightthickness=0, bd=0, cursor="hand2")
-        dot.create_oval(1,1,ui_px(20)-1,ui_px(20)-1,fill=color,outline=color)
+        draw_smooth_oval(dot, 1, 1, ui_px(20)-1, ui_px(20)-1, fill=color, outline=color)
         dot.bind("<Button-1>", lambda _e: command())
         return dot
 
@@ -3434,14 +3682,15 @@ class MapleTimerApp:
             self.drag_offset_y = int(event.y_root) - int(self.root.winfo_y())
         except tk.TclError:
             self.drag_offset_x, self.drag_offset_y = event.x, event.y
-        self.drag_using_proxy = self._begin_proxy_window_drag()
+        # Move the live window. Capturing the desktop and swapping in a second
+        # layered window stalls the first movement and flashes on release.
         return "break"
 
     def _begin_proxy_window_drag(self):
         try:
             self.root.update_idletasks()
-            x = int(self.root.winfo_x())
-            y = int(self.root.winfo_y())
+            x = int(self.root.winfo_rootx())
+            y = int(self.root.winfo_rooty())
             width = max(1, int(self.root.winfo_width()))
             height = max(1, int(self.root.winfo_height()))
             image = ImageGrab.grab(bbox=(x, y, x + width, y + height)).convert("RGBA")
@@ -3477,42 +3726,32 @@ class MapleTimerApp:
             return False
 
     def _drag(self, event):
-        if getattr(self, "drag_blocked", False):
+        if getattr(self, "resizing_main_window", False):
+            return self._resize(event)
+        if getattr(self, "drag_blocked", False) or not getattr(self, "dragging_main_window", False):
             return "break"
         x = int(event.x_root) - int(getattr(self, "drag_offset_x", 0))
         y = int(event.y_root) - int(getattr(self, "drag_offset_y", 0))
-        self.app_position = (x, y)
-        if getattr(self, "drag_using_proxy", False) and getattr(self, "drag_proxy", None) is not None:
-            try:
-                self.drag_proxy.geometry(f"+{x}+{y}")
-            except tk.TclError:
-                self.drag_using_proxy = False
-                self._move_main_window(x, y)
-        else:
+        if (x, y) != self.app_position:
             self._move_main_window(x, y)
         return "break"
 
-    def _end_drag(self, _event):
+    def _end_drag(self, event):
+        if getattr(self, "resizing_main_window", False):
+            return self._end_resize(event)
         if getattr(self, "drag_blocked", False):
             self.drag_blocked = False
             self.dragging_main_window = False
             return "break"
         if not getattr(self, "dragging_main_window", False):
             return "break"
+        self._drag(event)
         self._finish_main_window_drag()
         return "break"
 
     def _finish_main_window_drag(self):
         x, y = self._safe_app_position(getattr(self, "app_position", None))
-        self.app_position = (x, y)
-        self._destroy_drag_proxy()
-        try:
-            self.root.attributes("-alpha", 1.0)
-            self.root.geometry(f"+{x}+{y}")
-            self.root.deiconify()
-            self.root.lift()
-        except tk.TclError:
-            pass
+        self._move_main_window(x, y)
         self.drag_using_proxy = False
         self.dragging_main_window = False
         try:
@@ -3520,7 +3759,6 @@ class MapleTimerApp:
         except tk.TclError:
             pass
         self.app_position = self._current_safe_position()
-        self._schedule_surface_refresh(80)
         self._save_settings()
 
     def _destroy_drag_proxy(self):
@@ -3568,11 +3806,13 @@ class MapleTimerApp:
         return "break"
 
     def _reset_app_size(self):
+        self._cancel_surface_refresh()
         self.app_size = DEFAULT_APP_SIZE
         self.app_position = self._current_safe_position()
-        self.root.geometry(f"{DEFAULT_APP_SIZE[0]}x{DEFAULT_APP_SIZE[1]}+{self.app_position[0]}+{self.app_position[1]}")
-        self.root.update_idletasks()
-        self._refresh_window_surface()
+        # Use the same native resize path as the grip. Reapplying window chrome
+        # after laying out the timer can change client dimensions a second time.
+        self._resize_main_window_nomove(*self.app_size)
+        self._refresh_resize_surface()
         self._save_settings()
 
     def _toggle_topmost(self):
@@ -3901,8 +4141,11 @@ class MapleTimerApp:
         return ImageTk.PhotoImage(image)
 
     def _draw_widget_restore_button(self, canvas):
-        x2 = 384 - 11
-        y1 = 11
+        # The compact widget keeps a 32px corner radius instead of scaling it.
+        # Its top-right transparent area is therefore larger proportionally.
+        # Include the antialias padding when moving the button inside the card.
+        x2 = 367 if LOW_RES else 384 - 11
+        y1 = 24 if LOW_RES else 11
         size = 27
         x1 = x2 - size
         y2 = y1 + size
@@ -4258,13 +4501,17 @@ class MapleTimerApp:
         except Exception:
             self.restore_blur_pil = self._make_restore_blur_fallback()
 
+    @staticmethod
+    def _main_surface_bounds(width, height):
+        return (8, 8, width - 14, height - 14)
+
     def _clip_restore_blur_to_app_shape(self, image):
         width, height = image.size
         scale = 4
         mask = Image.new("L", (width * scale, height * scale), 0)
         mask_draw = ImageDraw.Draw(mask)
         mask_draw.rounded_rectangle(
-            (8 * scale, 8 * scale, (width - 14) * scale, (height - 14) * scale),
+            tuple(value * scale for value in self._main_surface_bounds(width, height)),
             radius=28 * scale,
             fill=255,
         )

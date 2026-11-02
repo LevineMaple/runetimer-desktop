@@ -4226,6 +4226,11 @@ class MapleTimerApp:
         if coupon_enabled:
             self.widget_count_region = (right_x - 32, 40, right_x + 32, value_y + 22)
             self.widget_coupon_region = (coupon_x - 32, 40, coupon_x + 32, value_y + 22)
+            # Keep the compact restore button's hit target separate from coupon.
+            restore = self.widget_restore_region
+            if restore[3] > self.widget_coupon_region[1]:
+                self.widget_coupon_region = (coupon_x - 32, 40,
+                                             min(coupon_x + 32, restore[0] - 2), value_y + 22)
             self._canvas_rounded_rect(canvas, coupon_x - 14, rune_y - 14,
                                       coupon_x + 14, rune_y + 14, 6,
                                       fill="#9ff7d2", outline="#9ff7d2", width=3,

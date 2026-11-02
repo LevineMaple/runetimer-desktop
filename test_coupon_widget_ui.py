@@ -37,7 +37,9 @@ class CouponWidgetTests(unittest.TestCase):
                     for region in regions:
                         self.assertGreaterEqual(region[0], 0)
                         self.assertLessEqual(region[2], appmod.base.WIDGET_WIDTH)
-                    self.assertGreater(app.widget_coupon_region[1], app.widget_restore_region[3])
+                    coupon, restore = app.widget_coupon_region, app.widget_restore_region
+                    self.assertTrue(coupon[1] > restore[3] or coupon[2] < restore[0],
+                                    'coupon and restore hit targets must not overlap')
                     self.assertTrue(app.widget_canvas.find_withtag('widget_coupon_icon'))
                     self.assertFalse(app.widget_canvas.find_withtag('widget_coupon_exp'))
                     self.assertFalse(app.widget_canvas.find_withtag('widget_coupon_leaf'))

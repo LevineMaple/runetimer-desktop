@@ -66,17 +66,26 @@ class CouponVolumeUITests(unittest.TestCase):
             app.root.update()
             viewport = app.settings_viewport
             self.assertLessEqual(app.settings_stack.winfo_reqwidth(), viewport.winfo_width())
-            self.assertLessEqual(app.settings_stack.winfo_reqheight(), viewport.winfo_height())
-            vx, vy = viewport.winfo_rootx(), viewport.winfo_rooty()
+            # Responsive settings may scroll vertically on compact windows.
+            viewport.yview_moveto(0)
+            app.root.update_idletasks()
+            self.assertEqual(viewport.yview()[0], 0.0)
+            vx = viewport.winfo_rootx()
             for control in descendants(app.settings_stack):
                 if isinstance(control, appmod.tk.Frame):
                     continue
                 self.assertTrue(control.winfo_ismapped())
                 self.assertGreaterEqual(control.winfo_rootx(), vx)
-                self.assertGreaterEqual(control.winfo_rooty(), vy)
                 self.assertLessEqual(control.winfo_rootx()+control.winfo_width(), vx+viewport.winfo_width())
-                self.assertLessEqual(control.winfo_rooty()+control.winfo_height(), vy+viewport.winfo_height())
-            self.assertEqual(tuple(viewport.yview()), (0.0, 1.0))
+            if app.settings_stack.winfo_reqheight() > viewport.winfo_height():
+                app._scroll_settings(SimpleNamespace(delta=-1200, num=None))
+                app.root.update_idletasks()
+                self.assertGreater(viewport.yview()[0], 0.0)
+                self.assertAlmostEqual(viewport.yview()[1], 1.0)
+                self.assertLessEqual(app.settings_stack.winfo_rooty()+app.settings_stack.winfo_height(),
+                                     viewport.winfo_rooty()+viewport.winfo_height()+1)
+            else:
+                self.assertEqual(tuple(viewport.yview()), (0.0, 1.0))
             fixture.BoosterUITests().snapshot(app.root, 'settings-coupon-volume')
         finally:
             app.shutting_down = True

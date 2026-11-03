@@ -2000,11 +2000,7 @@ class MapleTimerApp:
         dialog.geometry(self._center_geometry(width, height))
         dialog.resizable(False, False)
         dialog.overrideredirect(True)
-        dialog.configure(bg=TRANSPARENT)
-        try:
-            dialog.wm_attributes("-transparentcolor", TRANSPARENT)
-        except tk.TclError:
-            pass
+        dialog.configure(bg=c["surface"])
         dialog.attributes("-topmost", True)
         self._apply_window_icon(dialog)
         try:
@@ -2034,21 +2030,11 @@ class MapleTimerApp:
             if on_accept:
                 on_accept()
 
-        shell = tk.Canvas(dialog, width=width, height=height, bg=TRANSPARENT, highlightthickness=0, bd=0)
+        shell = tk.Canvas(dialog, width=width, height=height, bg=c["surface"], highlightthickness=0, bd=0)
         shell.pack(fill="both", expand=True)
-        outer_radius = max(54, min(82, int(min(width, height) * 0.08)))
-        self._canvas_rounded_rect(shell, 16, 18, width - 12, height - 8, outer_radius, fill="#000000", outline="")
-        self._canvas_rounded_rect(
-            shell,
-            8,
-            8,
-            width - 14,
-            height - 14,
-            outer_radius,
-            fill=c["surface"],
-            outline="#182020",
-            width=1,
-        )
+        # Terms are a fully opaque rectangular document window.
+        shell.create_rectangle(0, 0, width - 1, height - 1,
+                               fill=c["surface"], outline="#182020")
 
         container = tk.Frame(shell, bg=c["surface"], padx=0, pady=0)
         shell.create_window(18, 18, anchor="nw", window=container, width=width - 40, height=height - 40)
@@ -2139,11 +2125,14 @@ class MapleTimerApp:
         content.bind("<Configure>", refresh_scroll_region)
         dialog.bind("<MouseWheel>", scroll_disclaimer)
 
-        max_text_width = max(520, inner_width - 150)
+        max_text_width = max(80, inner_width - 260)
+
+        def fit_text_to_width(event):
+            event.widget.configure(wraplength=max(1, event.width - 4))
         terms_panel = tk.Frame(content, bg=c["panel"], padx=24, pady=24, highlightthickness=1, highlightbackground=c["line"])
         terms_panel.pack(fill="x", pady=(0, 22))
         for index, paragraph in enumerate(DISCLAIMER_TERMS_PARAGRAPHS):
-            tk.Label(
+            paragraph_label = tk.Label(
                 terms_panel,
                 text=paragraph,
                 bg=c["panel"],
@@ -2152,14 +2141,16 @@ class MapleTimerApp:
                 justify="left",
                 anchor="w",
                 wraplength=max_text_width,
-            ).pack(fill="x", anchor="w", pady=(0, 18 if index < len(DISCLAIMER_TERMS_PARAGRAPHS) - 1 else 0))
+            )
+            paragraph_label.pack(fill="x", anchor="w", pady=(0, 18 if index < len(DISCLAIMER_TERMS_PARAGRAPHS) - 1 else 0))
+            paragraph_label.bind("<Configure>", fit_text_to_width)
 
         action_area = tk.Frame(body, bg=c["surface"], padx=34, pady=0)
         action_area.pack(fill="x", pady=(22, 0))
 
         confirm = tk.Frame(action_area, bg=c["panel"], padx=20, pady=15, highlightthickness=1, highlightbackground=c["line"])
         confirm.pack(fill="x", anchor="w", pady=(0, 24))
-        tk.Label(
+        confirm_label = tk.Label(
             confirm,
             text=DISCLAIMER_CONFIRM_TEXT,
             bg=c["panel"],
@@ -2168,7 +2159,9 @@ class MapleTimerApp:
             justify="center",
             anchor="center",
             wraplength=max_text_width,
-        ).pack(fill="x", anchor="center")
+        )
+        confirm_label.pack(fill="x", anchor="center")
+        confirm_label.bind("<Configure>", fit_text_to_width)
 
         if readonly:
             RoundedButton(
@@ -2245,7 +2238,6 @@ class MapleTimerApp:
             dialog.update_idletasks()
             width = int(width or dialog.winfo_width())
             height = int(height or dialog.winfo_height())
-            self._apply_rounded_window(dialog, width, height, max(54, min(82, int(min(width, height) * 0.08))))
             x = int(dialog.winfo_x())
             y = int(dialog.winfo_y())
             self._force_windows_topmost(dialog, x, y, width, height, force_focus=True)

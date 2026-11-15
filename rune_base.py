@@ -159,7 +159,7 @@ DISCLAIMER_TERMS_PARAGRAPHS = (
     "마우스 입력에 접근하지 않습니다.\n\n"
     "또한 게임을 대신 조작하거나, 자동으로 입력을 발생시키거나,\n"
     "게임 플레이를 자동화하는 기능을 포함하지 않습니다.",
-    "프로그램은 사용자가 지정한 미니맵 영역을\n"
+    "프로그램은 미니맵 영역과 야누스 알림에 지정한 아이콘 영역을\n"
     "화면 캡처 방식으로 확인합니다.\n\n"
     "해당 캡처 데이터는 사용자 PC 안에서만 분석되며,\n"
     "캡처된 화면 정보는 외부 서버로 전송되지 않습니다.\n"
@@ -183,7 +183,7 @@ DISCLAIMER_SECTIONS = (
     ),
     (
         "화면 캡처 기반 분석",
-        "사용자가 직접 지정한 미니맵 영역만 이 PC 안에서 분석합니다.\n"
+        "미니맵 영역과 야누스 알림에 지정한 아이콘 영역을 이 PC 안에서 분석합니다.\n"
         "게임 클라이언트 파일, 메모리, 패킷, 키보드/마우스 입력에는 접근하지 않으며,\n"
         "어떤 데이터도 외부로 전송하지 않습니다.\n"
         "인터넷 연결 자체가 필요 없는 프로그램입니다.",
@@ -1048,11 +1048,16 @@ class MapleTimerApp:
         self.warning_sound_enabled = True
         self.rune_sound_enabled = True
         self.booster_mode_enabled = False
+        self.janus_enabled = False
+        self.janus_region = None
+        self.janus_client_size = None
         self.booster_use_count = 3
         self.tts_sound_enabled = False
         self.warning_volume = 100
         self.rune_volume = 100
         self.halfhour_volume = 100
+        self.janus_volume = 100
+        self.janus_sound_path = ""
         self.shutting_down = False
         self.sound_volume_cache = {}
         self.rune_cooldown_minutes = DEFAULT_RUNE_COOLDOWN_MINUTES
@@ -2358,6 +2363,19 @@ class MapleTimerApp:
         self.warning_sound_enabled = clamp_bool(data.get("warning_sound_enabled"), self.warning_sound_enabled)
         self.rune_sound_enabled = clamp_bool(data.get("rune_sound_enabled"), self.rune_sound_enabled)
         self.booster_mode_enabled = clamp_bool(data.get("booster_mode_enabled"), self.booster_mode_enabled)
+        self.janus_enabled = clamp_bool(data.get("janus_enabled"), False)
+        region = data.get("janus_region")
+        client = data.get("janus_client_size")
+        self.janus_region = None
+        self.janus_client_size = None
+        if (isinstance(region, list) and len(region) == 4
+                and all(type(number) is int for number in region)
+                and isinstance(client, list) and len(client) == 2
+                and all(type(number) is int and number > 0 for number in client)
+                and 0 <= region[0] < region[2] <= client[0]
+                and 0 <= region[1] < region[3] <= client[1]):
+            self.janus_region = tuple(region)
+            self.janus_client_size = tuple(client)
         self.booster_use_count = normalize_booster_use_count(data.get("booster_use_count"))
         self.halfhour_enabled = clamp_bool(data.get("halfhour_enabled"), False)
         self.tts_sound_enabled = clamp_bool(data.get("tts_sound_enabled"), self.tts_sound_enabled)
@@ -2365,6 +2383,9 @@ class MapleTimerApp:
         self.warning_volume = int(clamp_float(data.get("warning_volume"), self.warning_volume, 0.0, 100.0))
         self.rune_volume = int(clamp_float(data.get("rune_volume"), self.rune_volume, 0.0, 100.0))
         self.halfhour_volume = int(clamp_float(data.get("halfhour_volume"), 100, 0.0, 100.0))
+        self.janus_volume = int(clamp_float(data.get("janus_volume"), self.warning_volume, 0.0, 100.0))
+        sound_path = data.get("janus_sound_path", "")
+        self.janus_sound_path = sound_path if isinstance(sound_path, str) else ""
         self.rune_cooldown_minutes = normalize_rune_cooldown_minutes(data.get("rune_cooldown_minutes"), self.rune_cooldown_minutes)
         self.disclaimer_accepted = clamp_bool(data.get("disclaimer_accepted"), False)
         self.disclaimer_accepted_at = data.get("disclaimer_accepted_at") if isinstance(data.get("disclaimer_accepted_at"), str) else None
@@ -2406,6 +2427,9 @@ class MapleTimerApp:
             "warning_sound_enabled": self.warning_sound_enabled,
             "rune_sound_enabled": self.rune_sound_enabled,
             "booster_mode_enabled": self.booster_mode_enabled,
+            "janus_enabled": self.janus_enabled,
+            "janus_region": self.janus_region,
+            "janus_client_size": self.janus_client_size,
             "booster_use_count": normalize_booster_use_count(getattr(self, "booster_use_count", 3)),
             "halfhour_enabled": getattr(self, "halfhour_enabled", False),
             "tts_sound_enabled": self.tts_sound_enabled,
@@ -2413,6 +2437,8 @@ class MapleTimerApp:
             "warning_volume": self.warning_volume,
             "rune_volume": self.rune_volume,
             "halfhour_volume": self.halfhour_volume,
+            "janus_volume": self.janus_volume,
+            "janus_sound_path": self.janus_sound_path,
             "rune_cooldown_minutes": self.rune_cooldown_minutes,
             "disclaimer_accepted": bool(getattr(self, "disclaimer_accepted", False)),
             "disclaimer_accepted_at": getattr(self, "disclaimer_accepted_at", None),
@@ -2733,6 +2759,14 @@ class MapleTimerApp:
         self._settings_volume_row(left, "룬 볼륨", self.rune_volume, self._set_rune_volume)
         self._settings_toggle_row(right, "수동 모드", self.offline_mode_enabled, self._set_offline_mode_enabled)
         self._settings_toggle_row(right, "부스터 모드", self.booster_mode_enabled, self._set_booster_mode_enabled)
+        self._settings_toggle_row(right, "야누스 알림음", self.janus_enabled, self._set_janus_enabled)
+        janus_row = self._settings_volume_row(right, "야누스 볼륨", self.janus_volume, self._set_janus_volume)
+        if LOW_RES:
+            janus_row.pack_configure(pady=0)
+        self.janus_sound_settings_button = tk.Button(janus_row, text="음원 설정", command=self._show_janus_sound_dialog,
+            bg=c["panel_3"], fg=c["text"], relief="flat", font=self._settings_font(8), padx=4, pady=0, bd=0, highlightthickness=0)
+        self.janus_sound_settings_button.place(relx=1, y=0, anchor="ne")
+        self.janus_sound_menu = tk.Menu(self.janus_sound_settings_button, tearoff=False)
         self._settings_booster_use_count_row(right)
         self._settings_rune_cooldown_row(right)
         self._settings_volume_row(right, "30분 쿠폰 볼륨", self.halfhour_volume, self._set_halfhour_volume)
@@ -3344,16 +3378,19 @@ class MapleTimerApp:
 
         button_size = max(30, int(106 * scale))
         button_y = height / 2
-        centers = {
-            "scan": (width * 0.22, button_y),
-            "rune": (width * 0.50, button_y),
-            "settings": (width * 0.78, button_y),
-        }
+        buttons = ["scan"]
+        if self.janus_enabled:
+            buttons.append("janus")
+        buttons.append("rune")
         if getattr(self, "booster_mode_enabled", False):
-            centers = {name: (width * fraction, button_y) for name, fraction in
-                       (("scan", .17), ("rune", .39), ("booster", .61), ("settings", .83))}
-            button_size = min(button_size, int(width * .19))
-        centers = {name: (round(cx), round(cy)) for name, (cx, cy) in centers.items()}
+            buttons.append("booster")
+        buttons.append("settings")
+        positions = {3: (.22, .50, .78), 4: (.17, .39, .61, .83),
+                     5: (.13, .315, .50, .685, .87)}
+        centers = {name: (round(width * fraction), round(button_y))
+                   for name, fraction in zip(buttons, positions[len(buttons)])}
+        if len(buttons) >= 4:
+            button_size = min(button_size, int(width * (.19 if len(buttons) == 4 else .16)))
         self.bottom_dock_regions = {}
         for name, (cx, cy) in centers.items():
             x1 = round(cx - button_size / 2)
@@ -3366,12 +3403,19 @@ class MapleTimerApp:
             if name == "scan":
                 outline = c["blue"] if self._scan_capture_is_active() else c["red"]
                 line_width = max(2, int(3 * scale))
+            elif name == "janus":
+                outline = "#4af1ae" if self.janus_region else c["red"]
+                line_width = max(2, int(3 * scale))
             elif name == "booster":
                 outline = "#4af1ae" if getattr(self, "booster_running", False) else "#353a3b"
                 line_width = max(2, int(3 * scale))
             rounded_surface((x1, y1, x2, y2), max(8, int(30 * scale)),
                             "#101213", outline, line_width)
 
+        if "janus" in centers:
+            cx, cy = centers["janus"]
+            self._draw_janus_capture_symbol(draw, cx * raster_scale, cy * raster_scale,
+                                            button_size * .22 * raster_scale)
         background.alpha_composite(surface.resize((width, height), Image.Resampling.LANCZOS))
         self.bottom_dock_background_photo = ImageTk.PhotoImage(background)
         canvas.create_image(0, 0, image=self.bottom_dock_background_photo, anchor="nw")
@@ -3403,6 +3447,20 @@ class MapleTimerApp:
             self._draw_booster_icon(canvas, *centers["booster"], rune_size)
         self._draw_gear_icon(canvas, *centers["settings"], "#f4f6f7")
 
+    @staticmethod
+    def _draw_janus_capture_symbol(draw, cx, cy, radius):
+        outer = radius * 1.18
+        draw.ellipse((cx-outer, cy-outer, cx+outer, cy+outer),
+                     outline="#ffffff", width=max(1, round(radius * .12)))
+        radius *= .73
+        corners = [(cx + radius * math.cos(math.radians(angle)),
+                    cy + radius * math.sin(math.radians(angle)))
+                   for angle in range(0, 360, 60)]
+        draw.line(corners + corners[:1], fill="#ffffff", width=max(1, round(radius * .17)))
+        dot = radius * .15
+        for x, y in corners:
+            draw.ellipse((x-dot, y-dot, x+dot, y+dot), fill="#ffffff")
+
     def _draw_booster_icon(self, canvas, cx, cy, half_height):
         running = bool(getattr(self, "booster_running", False))
         half_width = max(4, int(half_height * .72))
@@ -3423,6 +3481,8 @@ class MapleTimerApp:
             if x1 <= event.x <= x2 and y1 <= event.y <= y2:
                 if name == "scan":
                     self._select_rune_region()
+                elif name == "janus":
+                    self._select_janus_region()
                 elif name == "rune":
                     if getattr(self, "offline_mode_enabled", False):
                         self._reset_offline_rune_cycle()
@@ -4180,6 +4240,18 @@ class MapleTimerApp:
                 left_x, booster_x, right_x, coupon_x = 60, 150, 234, 316
             else:
                 left_x, right_x, coupon_x = 88, 198, 294
+        janus_enabled = bool(getattr(self, "janus_enabled", False))
+        self.widget_janus_text_item = None
+        if janus_enabled:
+            # Append Janus after all active controls, within the existing OBS frame.
+            slots = 3 + int(booster_enabled) + int(coupon_enabled)
+            spacing = {3: 110, 4: 84, 5: 68}[slots]
+            first = 186 - (slots - 1) * spacing / 2
+            left_x = first
+            booster_x = first + spacing
+            right_x = first + (1 + int(booster_enabled)) * spacing
+            coupon_x = right_x + spacing
+            janus_x = first + (slots - 1) * spacing
         center_y = 68
         rune_y = 58
 
@@ -4201,7 +4273,23 @@ class MapleTimerApp:
         )
         elapsed_minutes, total_minutes = self._rune_cooldown_display_pair()
         widget_value_font = self._settings_font(10, "bold")
+        if janus_enabled and LOW_RES:
+            # Use pixel units so all five readouts fit even at high Windows DPI.
+            widget_value_font = self._settings_font(-min(14, round(spacing * WIDGET_WIDTH / 384 / 4)), "bold")
         value_y = 94
+        if janus_enabled:
+            factor = WIDGET_WIDTH / 384
+            if getattr(self, "widget_janus_photo", None) is None:
+                symbol = Image.new("RGBA", (128, 128))
+                self._draw_janus_capture_symbol(ImageDraw.Draw(symbol), 64, 64, 50)
+                side = round(34 * factor)
+                self.widget_janus_photo = ImageTk.PhotoImage(
+                    symbol.resize((side, side), Image.Resampling.LANCZOS), master=canvas)
+            canvas.create_image(janus_x * factor, rune_y * factor, image=self.widget_janus_photo,
+                                tags=("widget_janus_icon",))
+            self.widget_janus_text_item = canvas.create_text(
+                janus_x, value_y, text=self._janus_widget_text(time.monotonic()),
+                fill="#ffffff", font=widget_value_font, tags=("widget_janus_time",))
         canvas.create_text(left_x, value_y, text=f"{elapsed_minutes} / {total_minutes}", fill="#eef3f4", font=widget_value_font, anchor="center")
 
         display_seconds = max(0, int(self._warning_remaining_float() + 0.999))
@@ -4268,6 +4356,9 @@ class MapleTimerApp:
         number_fill = "#ffffff"
         try:
             canvas.itemconfigure(item, text=str(display_seconds), fill=number_fill)
+            janus_item = getattr(self, "widget_janus_text_item", None)
+            if janus_item is not None:
+                canvas.itemconfigure(janus_item, text=self._janus_widget_text(now))
             if getattr(self, "halfhour_enabled", False):
                 coupon_item = getattr(self, "widget_coupon_text_item", None)
                 if coupon_item is not None:
@@ -5145,6 +5236,19 @@ class MapleTimerApp:
         self._save_settings()
         self._render_monitor_status()
 
+    def _janus_widget_text(self, now=None):
+        return "--:--"
+
+    def _set_janus_enabled(self, value):
+        self.janus_enabled = bool(value)
+        self._save_settings()
+        self._draw_bottom_dock()
+        notify = getattr(self, "_janus_settings_changed", None)
+        if notify:
+            notify()
+        if self.widget_mode_active:
+            self._draw_widget_mode(force=True)
+
     def _set_warning_sound_enabled(self, value):
         self.warning_sound_enabled = bool(value)
         if hasattr(self, "warning_sound_var"):
@@ -5208,6 +5312,43 @@ class MapleTimerApp:
 
     def _set_rune_volume(self, value):
         self.rune_volume = int(max(0, min(100, value)))
+        self._save_settings()
+
+    def _show_janus_sound_dialog(self):
+        menu = self.janus_sound_menu
+        menu.delete(0, "end")
+        menu.add_command(label=Path(self.janus_sound_path).name or "기본 야누스 음성", state="disabled")
+        menu.add_separator()
+        menu.add_command(label="음원 선택…", command=self._choose_janus_sound)
+        menu.add_command(label="기본음 복원", command=self._reset_janus_sound,
+                         state="normal" if self.janus_sound_path else "disabled")
+        preview = getattr(self, "_play_janus_sound", None)
+        if preview:
+            menu.add_command(label="미리듣기", command=preview)
+        button = self.janus_sound_settings_button
+        try:
+            menu.tk_popup(button.winfo_rootx(), button.winfo_rooty() + button.winfo_height())
+        finally:
+            menu.grab_release()
+
+    def _choose_janus_sound(self):
+        chosen = filedialog.askopenfilename(parent=self.root, title="야누스 알림음 선택",
+            filetypes=[("오디오 파일", "*.mp3 *.wav"), ("MP3", "*.mp3"), ("WAV", "*.wav")])
+        if not chosen:
+            return
+        path = Path(chosen)
+        if path.suffix.lower() not in (".mp3", ".wav") or not path.is_file():
+            messagebox.showwarning("야누스 알림음", "사용할 MP3 또는 WAV 파일을 선택하세요.", parent=self.root)
+            return
+        self.janus_sound_path = str(path.resolve())
+        self._save_settings()
+
+    def _reset_janus_sound(self):
+        self.janus_sound_path = ""
+        self._save_settings()
+
+    def _set_janus_volume(self, value):
+        self.janus_volume = int(max(0, min(100, value)))
         self._save_settings()
 
     def _set_halfhour_volume(self, value):

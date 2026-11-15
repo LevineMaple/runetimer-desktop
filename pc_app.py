@@ -1,14 +1,19 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Windows capture and diagnostics.
 import json
+import math
 import os
 import sys
 import threading
 import time
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
+from functools import partial
 import pc_capture as cap
 from pc_map_audio import MapAudioMatcher
-from pc_booster import BoosterMixin
+from pc_booster import BoosterMixin, BoosterAudio
+from pc_janus import sample_janus, valid_skill_region
+from pc_janus_reader import JanusTracker
 from pc_halfhour import HalfHourMixin
 
 cap.enable_dpi()
@@ -35,7 +40,7 @@ def seed_settings():
         # Never import the old window anchor (it followed an auxiliary window).
         data.update(region=None,rune_region=None,rune_window_anchor=None,
                     offline_mode_enabled=False,monitor_enabled=True,rune_sound_enabled=True,
-                    booster_mode_enabled=False,
+                    booster_mode_enabled=False, janus_enabled=False, janus_region=None, janus_client_size=None,
                     warning_volume=100,rune_volume=100,first_launch_centered_done=True)
         target.write_text(json.dumps(data,ensure_ascii=False,indent=2),encoding='utf-8')
 
@@ -49,7 +54,7 @@ from tkinter import messagebox
 
 class ScreenSelector(tk.Toplevel):
     """Frozen, physical-pixel virtual desktop selection, including negative origins."""
-    def __init__(self, parent, callback, closed):
+    def __init__(self, parent, callback, closed, *, instruction=None, min_size=(40, 30)):
         bounds=cap.desktop_bounds()
         screenshot=cap.grab(bounds)
         super().__init__(parent)
@@ -62,7 +67,8 @@ class ScreenSelector(tk.Toplevel):
         self.canvas.pack(fill='both',expand=True)
         self.canvas.create_image(0,0,image=self.photo,anchor='nw')
         self.canvas.create_rectangle(20,18,780,102,fill='#101819',outline='#4af1ae')
-        self.canvas.create_text(36,59,anchor='w',text='미니맵 전체 + 흰 테두리 바깥 여백까지 넓게 드래그\n지도 제목과 테두리 네 면이 잘리지 않게 지정 · Esc 취소',fill='white',font=('맑은 고딕',15,'bold'))
+        self.canvas.create_text(36,59,anchor='w',text=instruction or '미니맵 전체 + 흰 테두리 바깥 여백까지 넓게 드래그\n지도 제목과 테두리 네 면이 잘리지 않게 지정 · Esc 취소',fill='white',font=('맑은 고딕',15,'bold'))
+        self.min_size = min_size
         self.box=None; self.start=None
         self.canvas.bind('<ButtonPress-1>',self.begin)
         self.canvas.bind('<B1-Motion>',self.move)
@@ -80,7 +86,7 @@ class ScreenSelector(tk.Toplevel):
     def finish(self,e):
         if not self.start: return
         x1,x2=sorted((self.start[0],e.x)); y1,y2=sorted((self.start[1],e.y))
-        if x2-x1<40 or y2-y1<30: return
+        if x2-x1 < self.min_size[0] or y2-y1 < self.min_size[1]: return
         x,y,_,_=self.bounds
         region=(x+x1,y+y1,x+x2,y+y2)
         self.close()
@@ -113,6 +119,17 @@ class PcTimerApp(HalfHourUIMixin, HalfHourMixin, BoosterMixin, base.MapleTimerAp
     def __init__(self):
         self._init_booster(base.resource_path, base.log_error)
         self._init_halfhour(base.resource_path, base.log_error)
+        self._janus_executor = None
+        self._janus_after = self._janus_future = None
+        self._janus_cancel = threading.Event()
+        self._janus_tracker = JanusTracker()
+        self._janus_hwnd = None
+        self._janus_next_sample = 0.0
+        self.janus_status = '꺼짐'
+        self._janus_audio = BoosterAudio(
+            base.resource_path('assets', 'sounds', 'janus.wav'),
+            lambda exc: base.log_error('janus_audio', exc),
+            volume=lambda: self.janus_volume)
         self.capture_generation=0
         self.pc_status='미니맵 찾기 대기'
         self.pc_last_result={}
@@ -135,6 +152,112 @@ class PcTimerApp(HalfHourUIMixin, HalfHourMixin, BoosterMixin, base.MapleTimerAp
         self._booster_tick()
         self._halfhour_tick()
         base.log_error('pc_start',RuntimeError(f'v1.1.3-pc1 desktop={cap.desktop_bounds()} windows={cap.maple_windows()}'))
+
+    def _start_main_app_after_disclaimer(self):
+        super()._start_main_app_after_disclaimer()
+        self._janus_settings_changed()
+
+    def _set_offline_mode_enabled(self, value):
+        super()._set_offline_mode_enabled(value)
+        self._janus_settings_changed()
+
+    def _janus_active(self):
+        return (self.janus_enabled and self.janus_region and self.janus_client_size
+                and self.main_app_started and not self.offline_mode_enabled
+                and not self.pc_selecting and not self.shutting_down)
+
+    def _janus_settings_changed(self):
+        self._janus_cancel.set()
+        if self._janus_after is not None:
+            self.root.after_cancel(self._janus_after)
+            self._janus_after = None
+        if self._janus_future is not None:
+            self._janus_future.cancel()
+            self._janus_future = None
+        self._janus_audio.stop()
+        self._janus_tracker = JanusTracker()
+        self._janus_hwnd = None
+        self._janus_next_sample = 0.0
+        if self._janus_active():
+            self.janus_status = '남은 시간 판독 대기'
+            self._janus_cancel = threading.Event()
+            self._janus_after = self.root.after(100, self._janus_tick)
+        elif not self.janus_enabled:
+            self.janus_status = '꺼짐'
+        elif self.offline_mode_enabled:
+            self.janus_status = '수동 모드 · 캡처 중지'
+        else:
+            self.janus_status = '아이콘 영역 지정 대기'
+
+    def _janus_tick(self):
+        self._janus_after = None
+        if not self._janus_active():
+            return
+        now = time.monotonic()
+        if self._janus_future is not None and self._janus_future.done():
+            try:
+                sample = self._janus_future.result()
+                if sample is not None and now - sample.captured < 1.5:
+                    self._apply_janus_sample(sample)
+                else:
+                    self._janus_tracker.update(None, now, icon_present=False)
+            except Exception as exc:
+                if self.janus_status != '아이콘 캡처 실패':
+                    base.log_error('janus_capture', exc)
+                self.janus_status = '아이콘 캡처 실패'
+                self._janus_tracker.update(None, now, icon_present=False)
+            self._janus_future = None
+        if self._janus_future is None and now >= self._janus_next_sample:
+            if self._janus_executor is None:
+                self._janus_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='janus')
+            self._janus_future = self._janus_executor.submit(
+                sample_janus, tuple(self.janus_region), tuple(self.janus_client_size), self._janus_cancel)
+            self._janus_next_sample = now + 0.45
+        self._janus_after = self.root.after(100, self._janus_tick)
+
+    def _janus_widget_text(self, now=None):
+        tracker = self._janus_tracker
+        if tracker.previous is None:
+            return '--:--'
+        now = time.monotonic() if now is None else now
+        seconds, observed = tracker.previous
+        if now - observed >= 1:
+            if not tracker.decreasing or tracker.deadline is None:
+                return '--:--'
+            seconds = math.ceil(tracker.deadline - now)
+        if seconds <= 0:
+            return '--:--'
+        minutes, seconds = divmod(seconds, 60)
+        return f'{minutes}:{seconds:02d}'
+
+    def _apply_janus_sample(self, sample):
+        if sample.hwnd and self._janus_hwnd and sample.hwnd != self._janus_hwnd:
+            self._janus_tracker = JanusTracker()
+        if sample.hwnd:
+            self._janus_hwnd = sample.hwnd
+        self.janus_status = sample.status
+        if self._janus_tracker.update(sample.seconds, sample.captured, icon_present=sample.icon_present,
+                                      region_observed=sample.region_observed):
+            self._play_janus_sound()
+
+    def _janus_sound_file(self):
+        if self.janus_sound_path:
+            selected = Path(self.janus_sound_path)
+            if selected.suffix.lower() in ('.wav', '.mp3') and selected.is_file():
+                return selected
+        return base.resource_path('assets', 'sounds', 'janus.wav')
+
+    def _play_janus_sound(self):
+        if self.janus_volume > 0:
+            self._janus_audio.path = str(self._janus_sound_file())
+            self._janus_audio.play_once()
+
+    def _quit_app(self):
+        self.shutting_down = True
+        self._janus_settings_changed()
+        if self._janus_executor is not None:
+            self._janus_executor.shutdown(wait=False, cancel_futures=True)
+        super()._quit_app()
 
     def _sound_enabled_for_key(self, key):
         if (key == 'rune' and not getattr(self, 'offline_mode_enabled', False)
@@ -241,6 +364,7 @@ class PcTimerApp(HalfHourUIMixin, HalfHourMixin, BoosterMixin, base.MapleTimerAp
         if self.pc_selecting:return
         self._booster_detection_invalidated()
         self.pc_selecting=True; self.capture_generation+=1
+        self._janus_settings_changed()
         self.root.withdraw()
         for window in (getattr(self,'widget',None),self.pc_diag):
             if window:
@@ -256,10 +380,68 @@ class PcTimerApp(HalfHourUIMixin, HalfHourMixin, BoosterMixin, base.MapleTimerAp
 
     def _selector_closed(self):
         self.pc_selecting=False
+        self._janus_settings_changed()
         self._show_main_window(force_focus=True)
         if self.pc_diag:
             try:self.pc_diag.deiconify()
             except tk.TclError:pass
+
+    def _select_janus_region(self):
+        if not self.janus_enabled or self.pc_selecting:
+            return
+        if self.offline_mode_enabled:
+            messagebox.showinfo('야누스 캡처', '수동 모드를 끈 뒤 야누스 아이콘을 지정하세요.', parent=self.root)
+            return
+        game = self._choose_game()
+        if not game:
+            messagebox.showinfo('야누스 캡처', '메이플 게임 창을 먼저 표시해 주세요.', parent=self.root)
+            return
+        self.pc_selecting = True
+        self.capture_generation += 1
+        self._booster_detection_invalidated()
+        self._janus_settings_changed()
+        self.root.withdraw()
+        for window in (getattr(self, 'widget', None), self.pc_diag):
+            if window:
+                window.withdraw()
+        self.root.after(180, self._show_janus_selector)
+
+    def _show_janus_selector(self):
+        try:
+            if not self.janus_enabled or self.offline_mode_enabled:
+                self._selector_closed()
+                return
+            game = self._choose_game()
+            if game is None:
+                self._selector_closed()
+                return
+            ScreenSelector(self.root, partial(self._set_janus_region, game),
+                           self._selector_closed, min_size=(8, 8),
+                           instruction='야누스가 있는 스킬 아이콘 줄을 드래그하세요 · Esc 취소\n다른 스킬이 함께 들어가도 됩니다. 야누스 테두리와 숫자를 포함하세요.')
+        except Exception as exc:
+            self._selector_closed()
+            base.log_error('janus_selector', exc)
+            messagebox.showerror('야누스 캡처', '선택 화면을 열 수 없습니다. 다시 시도하세요.', parent=self.root)
+
+    def _set_janus_region(self, frozen_game, region):
+        if not self.janus_enabled or self.offline_mode_enabled:
+            return
+        game = self._choose_game()
+        if not game or (game['hwnd'], game['rect']) != (frozen_game['hwnd'], frozen_game['rect']):
+            messagebox.showinfo('야누스 캡처', '게임 창이 이동했습니다. 아이콘을 다시 지정하세요.', parent=self.root)
+            return
+        x, y, right, bottom = game['rect']
+        x1, y1, x2, y2 = region
+        if not (x <= x1 < x2 <= right and y <= y1 < y2 <= bottom and
+                valid_skill_region(x2-x1, y2-y1)):
+            messagebox.showinfo('야누스 캡처', '게임 창 안에서 야누스가 포함된 스킬 영역을 지정하세요 (최대 2048 × 512픽셀).', parent=self.root)
+            return
+        self.janus_region = (x1-x, y1-y, x2-x, y2-y)
+        self.janus_client_size = (right-x, bottom-y)
+        self._save_settings()
+        self._draw_bottom_dock()
+        self._janus_settings_changed()
+        self.pc_status = '야누스 영역 저장 · 캡처 확인에서 판독 상태를 확인하세요'
 
     def _search_minimap(self):
         if self.monitor_worker_running or self.pc_selecting or self.offline_mode_enabled:return
@@ -485,7 +667,7 @@ class PcTimerApp(HalfHourUIMixin, HalfHourMixin, BoosterMixin, base.MapleTimerAp
 
     def _refresh_diagnostics(self):
         if not self.pc_diag or not self.pc_diag.winfo_exists():return
-        self.pc_status_var.set(self.pc_status)
+        self.pc_status_var.set(self.pc_status + (f"\n야누스 · {self.janus_status}" if self.janus_enabled else ""))
         result=self.pc_last_result
         frame=result.get('captured')
         if frame is not None:

@@ -59,23 +59,34 @@ class ScreenSelector(tk.Toplevel):
         screenshot=cap.grab(bounds)
         super().__init__(parent)
         self.bounds=bounds; self.callback=callback; self.closed_callback=closed; self.done=False
+        self.withdraw()
         self.overrideredirect(True); self.attributes('-topmost',True)
+        self.attributes('-alpha', 0.0)
         x,y,r,b=bounds
-        self.geometry(f'{r-x}x{b-y}{x:+d}{y:+d}')
+        self.maxsize(r-x, b-y)
+        self.geometry(f'{r-x}x{b-y}+0+0')
         self.photo=ImageTk.PhotoImage(screenshot)
         self.canvas=tk.Canvas(self,highlightthickness=0,cursor='crosshair')
         self.canvas.pack(fill='both',expand=True)
         self.canvas.create_image(0,0,image=self.photo,anchor='nw')
-        self.canvas.create_rectangle(20,18,780,102,fill='#101819',outline='#4af1ae')
-        self.canvas.create_text(36,59,anchor='w',text=instruction or '미니맵 전체 + 흰 테두리 바깥 여백까지 넓게 드래그\n지도 제목과 테두리 네 면이 잘리지 않게 지정 · Esc 취소',fill='white',font=('맑은 고딕',15,'bold'))
+        self.canvas.create_rectangle(20-x,18-y,780-x,102-y,fill='#101819',outline='#4af1ae')
+        self.canvas.create_text(36-x,59-y,anchor='w',text=instruction or '미니맵 전체 + 흰 테두리 바깥 여백까지 넓게 드래그\n지도 제목과 테두리 네 면이 잘리지 않게 지정 · Esc 취소',fill='white',font=('맑은 고딕',15,'bold'))
         self.min_size = min_size
         self.box=None; self.start=None
-        self.canvas.bind('<ButtonPress-1>',self.begin)
-        self.canvas.bind('<B1-Motion>',self.move)
-        self.canvas.bind('<ButtonRelease-1>',self.finish)
-        self.bind('<Escape>',lambda e:self.close())
-        self.protocol('WM_DELETE_WINDOW',self.close)
-        self.lift(); self.focus_force(); self.grab_set()
+        try:
+            self.deiconify()
+            self.update()
+            cap.place_selection_window(self, self.canvas, bounds)
+            self.canvas.bind('<ButtonPress-1>',self.begin)
+            self.canvas.bind('<B1-Motion>',self.move)
+            self.canvas.bind('<ButtonRelease-1>',self.finish)
+            self.bind('<Escape>',lambda e:self.close())
+            self.protocol('WM_DELETE_WINDOW',self.close)
+            self.attributes('-alpha', 1.0)
+            self.lift(); self.focus_force(); self.grab_set()
+        except Exception:
+            self.destroy()
+            raise
 
     def begin(self,e):
         self.start=(e.x,e.y)
@@ -265,17 +276,18 @@ class PcTimerApp(HalfHourUIMixin, HalfHourMixin, BoosterMixin, base.MapleTimerAp
             return False
         return super()._sound_enabled_for_key(key)
 
-    def _set_map_audio_muted(self, muted):
+    def _set_map_audio_muted(self, muted, map_name=None):
         muted = bool(muted)
         changed = muted != getattr(self, 'pc_map_audio_muted', False)
         self.pc_map_audio_muted = muted
+        self.pc_muted_map_name = (map_name or '대상 맵') if muted else ''
         if changed:
             self._booster_detection_invalidated()
             self.pc_hit_count = self.pc_miss_count = 0
             self.rune_alert_latched = False
             self.last_rune_alert_at = 0.0
             self._clear_queued_sound('rune')
-            self._log_status('map_audio', '사계가 머무는 누각: 룬 알림음 자동 끔' if muted
+            self._log_status('map_audio', f'{self.pc_muted_map_name}: 룬 알림음 자동 끔' if muted
                              else '맵별 음소거 해제: 기존 룬 알림 설정 사용')
 
     def _build_settings_page(self):
@@ -589,7 +601,8 @@ class PcTimerApp(HalfHourUIMixin, HalfHourMixin, BoosterMixin, base.MapleTimerAp
             self._reset_detection('미니맵 테두리를 찾지 못했습니다 · 미리보기 확인')
             self._log_status('minimap_not_found',f"region={result.get('region')}")
         else:
-            self._set_map_audio_muted(result.get('map_audio_muted', False))
+            self._set_map_audio_muted(result.get('map_audio_muted', False),
+                                      (result.get('map_audio_match') or {}).get('map_name'))
             self._set_rune_capture_active(True)
             self.rune_score=float(result['score'])
             if self.rune_score>=self.rune_threshold:
@@ -608,7 +621,7 @@ class PcTimerApp(HalfHourUIMixin, HalfHourMixin, BoosterMixin, base.MapleTimerAp
                                             valid=not self.pc_map_audio_muted,
                                             generation=self.capture_generation)
             if self.pc_map_audio_muted:
-                self.pc_status='사계가 머무는 누각 · 룬 알림음 자동 끔'
+                self.pc_status=f'{self.pc_muted_map_name} · 룬 알림음 자동 끔'
                 self._set_auto_detect_status(self.pc_status)
             elif self.rune_alert_latched:
                 self.pc_status='룬 감지!'

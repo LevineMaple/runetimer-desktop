@@ -64,6 +64,36 @@ def desktop_bounds():
     x,y,w,h = (U.GetSystemMetrics(i) for i in (76,77,78,79))
     return x,y,x+w,y+h
 
+def place_selection_window(window, canvas, bounds):
+    """Place the overlay in absolute physical desktop coordinates.
+
+    Tk negative geometry offsets are distances from a screen edge, so they
+    cannot express the virtual desktop origin when a monitor is above/left.
+    """
+    U.GetAncestor.argtypes = [W.HWND, W.UINT]
+    U.GetAncestor.restype = W.HWND
+    U.SetWindowPos.argtypes = [W.HWND, W.HWND, ctypes.c_int, ctypes.c_int,
+                               ctypes.c_int, ctypes.c_int, W.UINT]
+    x, y, right, bottom = bounds
+    hwnd = U.GetAncestor(window.winfo_id(), 2)
+    if not hwnd:
+        raise ctypes.WinError()
+    # Mapping on a different-DPI monitor can queue WM_DPICHANGED. Drain it,
+    # then reapply the physical rectangle before exposing the frozen image.
+    for _ in range(2):
+        if not U.SetWindowPos(hwnd, None, x, y, right-x, bottom-y, 0x14):
+            raise ctypes.WinError()
+        window.update()
+    origin = W.POINT(0, 0)
+    rect = W.RECT()
+    if not (U.ClientToScreen(canvas.winfo_id(), ctypes.byref(origin))
+            and U.GetClientRect(canvas.winfo_id(), ctypes.byref(rect))):
+        raise ctypes.WinError()
+    actual = (origin.x, origin.y, origin.x+rect.right, origin.y+rect.bottom)
+    if actual != tuple(bounds):
+        raise RuntimeError(f'Selection overlay does not match capture: {actual}, {bounds}')
+
+
 def maple_windows():
     result = []
     @ENUMPROC

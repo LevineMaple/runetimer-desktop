@@ -4,7 +4,7 @@
 
 ## 다운로드
 
-**[Windows 실행파일 ZIP 다운로드](https://github.com/LevineMaple/runetimer-desktop/releases/download/v1.1.6/RunTimer-Windows.zip)** · [릴리즈 및 소스](https://github.com/LevineMaple/runetimer-desktop/releases/tag/v1.1.6)
+**[Windows 실행파일 ZIP 다운로드](https://github.com/LevineMaple/runetimer-desktop/releases/download/v1.1.7/RunTimer-Windows.zip)** · [릴리즈 및 소스](https://github.com/LevineMaple/runetimer-desktop/releases/tag/v1.1.7)
 
 압축을 풀고 `RuneTimer.exe`를 실행하세요. 처음 사용하는 경우 알림 볼륨은 100이며, 기존 사용자의 저장된 설정은 유지됩니다.
 
@@ -16,7 +16,7 @@
 - 기본 카운터와 선택적으로 추가하는 30분 카운터
 - 룬 표시가 사라진 뒤 시작하는 자동 부스터 안내
 - 캡처 확인, 소리 테스트, 미니맵 다시 찾기
-- `도원경 / 사계가 머무는 누각`을 확인하면 룬 알림음 자동 음소거
+- `도원경 / 사계가 머무는 누각` 또는 `카르시온 / 이슈피라의 눈`을 확인하면 룬 알림음 자동 음소거
 
 ## 최신 화면
 
